@@ -67,14 +67,14 @@
     import { getAuth, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
     import { 
       getFirestore, doc, setDoc, serverTimestamp, 
-      collection, query, where, onSnapshot 
+      collection, onSnapshot 
     } from 'firebase/firestore';
     import { 
       BookOpen, Users, LogIn, CheckCircle, Award, ArrowLeft, LogOut, 
       Clock, AlertTriangle, ShieldAlert, Sparkles, Maximize2, Minimize2
     } from 'lucide-react';
 
-    // Konfigurasi Firebase Fallback
+    // Konfigurasi Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyD3M8FfqHdzCRO3VCKB24xPEcEZgVVK--M",
       authDomain: "gen-lang-client-0031221493.firebaseapp.com",
@@ -96,9 +96,6 @@
       ? new BroadcastChannel('elearning_ips_realtime_channel')
       : null;
 
-    const defaultMaterials = [];
-    const defaultStudents = [];
-
     function StudentApp() {
       const [appSession, setAppSession] = useState(() => {
         const saved = localStorage.getItem('elearning_student_session_v3');
@@ -107,7 +104,7 @@
 
       const [materials, setMaterials] = useState(() => {
         const local = localStorage.getItem('elearning_materials_v3');
-        return local ? JSON.parse(local) : defaultMaterials;
+        return local ? JSON.parse(local) : [];
       });
 
       const [questions, setQuestions] = useState(() => {
@@ -117,7 +114,7 @@
 
       const [students, setStudents] = useState(() => {
         const local = localStorage.getItem('elearning_students_v3');
-        return local ? JSON.parse(local) : defaultStudents;
+        return local ? JSON.parse(local) : [];
       });
 
       const [scores, setScores] = useState(() => {
@@ -135,28 +132,26 @@
       const [loginSiswaSubKelas, setLoginSiswaSubKelas] = useState('A');
       const [loginSiswaName, setLoginSiswaName] = useState('');
 
-      // Sinkronisasi Realtime dari Firestore untuk Materi Diterbitkan/Dihapus Guru
+      // SINKRONISASI REALTIME UTAMA: Membaca Firestore secara menyeluruh
       useEffect(() => {
         const materialsRef = collection(db, 'artifacts', appId, 'public', 'data', 'materials');
 
         const unsubscribe = onSnapshot(materialsRef, (snapshot) => {
           const fetchedMaterials = [];
-          snapshot.forEach((doc) => {
-            fetchedMaterials.push({ id: doc.id, ...doc.data() });
+          snapshot.forEach((docSnap) => {
+            fetchedMaterials.push({ id: docSnap.id, ...docSnap.data() });
           });
 
-          if (fetchedMaterials.length > 0) {
-            setMaterials(fetchedMaterials);
-            localStorage.setItem('elearning_materials_v3', JSON.stringify(fetchedMaterials));
-          }
+          setMaterials(fetchedMaterials);
+          localStorage.setItem('elearning_materials_v3', JSON.stringify(fetchedMaterials));
         }, (error) => {
-          console.log("Menggunakan fallback materi lokal:", error);
+          console.error("Firestore Listener Fallback:", error);
         });
 
         return () => unsubscribe();
       }, []);
 
-      // Sinkronisasi Perubahan Data Lokal & BroadcastChannel
+      // Sinkronisasi Storage & BroadcastChannel
       useEffect(() => {
         const handleStorageChange = () => {
           const m = localStorage.getItem('elearning_materials_v3');
@@ -181,7 +176,6 @@
         }
       }, [appSession]);
 
-      // Detect Fullscreen State
       useEffect(() => {
         const handleFsChange = () => {
           setIsFullscreen(!!document.fullscreenElement);
@@ -192,17 +186,12 @@
 
       const toggleFullscreen = () => {
         if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch((e) => {
-            console.log(e);
-          });
-        } else {
-          if (document.exitFullscreen) {
-            document.exitFullscreen();
-          }
+          document.documentElement.requestFullscreen().catch(() => {});
+        } else if (document.exitFullscreen) {
+          document.exitFullscreen();
         }
       };
 
-      // Firebase Auth Listener
       useEffect(() => {
         const initAuth = async () => {
           try {
@@ -211,14 +200,11 @@
             } else {
               await signInAnonymously(auth);
             }
-          } catch (e) {
-            console.log("Firebase fallback lokal aktif");
-          }
+          } catch (e) {}
         };
         initAuth();
       }, []);
 
-      // BroadcastChannel Listener Reset Status & Perubahan Materi Multi-Tab
       useEffect(() => {
         if (!broadcast) return;
         const handleMessage = (event) => {
@@ -271,13 +257,12 @@
 
         setAppSession({
           username: loginSiswaName,
-          kelas: loginSiswaKelas,
-          subKelas: loginSiswaSubKelas
+          kelas: String(loginSiswaKelas),
+          subKelas: String(loginSiswaSubKelas)
         });
         setActiveTab('dashboard');
         showNotification(`Selamat datang ${loginSiswaName} (Kelas ${loginSiswaKelas}${loginSiswaSubKelas})!`);
         
-        // Memicu fullscreen otomatis saat login jika didukung
         if (document.documentElement.requestFullscreen) {
           document.documentElement.requestFullscreen().catch(() => {});
         }
@@ -305,7 +290,7 @@
       const handleSubmitQuiz = (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
-        const matQs = questions.filter(q => q.materialId === selectedMaterial.id);
+        const matQs = questions.filter(q => String(q.materialId) === String(selectedMaterial.id));
 
         let correct = 0;
         matQs.forEach(q => {
@@ -412,7 +397,7 @@
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1.5">Nama Lengkap Siswa</label>
-                  {students.filter(s => s.kelas === loginSiswaKelas && s.subKelas === loginSiswaSubKelas).length > 0 ? (
+                  {students.filter(s => String(s.kelas) === String(loginSiswaKelas) && String(s.subKelas) === String(loginSiswaSubKelas)).length > 0 ? (
                     <select 
                       value={loginSiswaName}
                       onChange={(e) => setLoginSiswaName(e.target.value)}
@@ -421,7 +406,7 @@
                     >
                       <option value="">-- Pilih Nama Siswa Terdaftar --</option>
                       {students
-                        .filter(s => s.kelas === loginSiswaKelas && s.subKelas === loginSiswaSubKelas)
+                        .filter(s => String(s.kelas) === String(loginSiswaKelas) && String(s.subKelas) === String(loginSiswaSubKelas))
                         .map(s => (
                           <option key={s.id} value={s.name}>{s.name}</option>
                         ))}
@@ -463,12 +448,12 @@
         );
       }
 
+      // PERBAIKAN LOGIKA FILTERING: Mengabaikan tipe data (String vs Number)
       const myClassMaterials = materials.filter(m => {
-        if (m.kelas !== appSession.kelas) return false;
-        if (m.subKelasTarget && m.subKelasTarget !== 'semua' && m.subKelasTarget !== appSession.subKelas) {
-          return false;
-        }
-        return true;
+        if (!m) return false;
+        const matchKelas = String(m.kelas) === String(appSession.kelas);
+        const matchSub = !m.subKelasTarget || m.subKelasTarget === 'semua' || String(m.subKelasTarget).toUpperCase() === String(appSession.subKelas).toUpperCase();
+        return matchKelas && matchSub;
       });
 
       return (
@@ -539,10 +524,10 @@
                   <div className="p-5 flex-1 flex flex-col">
                     <div className="flex justify-between items-center mb-2">
                       <span className="bg-blue-500/10 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-500/20">
-                        Semester {m.semester}
+                        Semester {m.semester || 1}
                       </span>
                       <span className="text-[11px] text-amber-400 font-bold flex items-center gap-1">
-                        <Clock className="w-3 h-3" /> {m.durationMinutes} Mnt
+                        <Clock className="w-3 h-3" /> {m.durationMinutes || 15} Mnt
                       </span>
                     </div>
 
@@ -574,7 +559,6 @@
       const [focusStatus, setFocusStatus] = useState('active'); 
       const presKey = `${appSession.username}_${selectedMaterial.id}`;
 
-      // Handle Timer Countdown
       useEffect(() => {
         const timerInterval = setInterval(() => {
           setRemainingSeconds(prev => {
@@ -589,7 +573,6 @@
         return () => clearInterval(timerInterval);
       }, []);
 
-      // Realtime Detection tab switch / window blur / focus change
       useEffect(() => {
         const updatePresence = (status) => {
           setFocusStatus(status);
@@ -636,8 +619,8 @@
         };
       }, [remainingSeconds]);
 
-      const matQuestions = questions.filter(q => q.materialId === selectedMaterial.id);
-      const alreadyTaken = scores.some(s => s.materialId === selectedMaterial.id && s.studentName === appSession.username);
+      const matQuestions = questions.filter(q => String(q.materialId) === String(selectedMaterial.id));
+      const alreadyTaken = scores.some(s => String(s.materialId) === String(selectedMaterial.id) && s.studentName === appSession.username);
 
       const mins = Math.floor(remainingSeconds / 60);
       const secs = remainingSeconds % 60;
@@ -645,7 +628,6 @@
 
       return (
         <div className="w-full min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-8 space-y-6">
-          {/* Sticky Header Status & Timer */}
           <div className="sticky top-4 z-30 bg-slate-900/95 backdrop-blur-xl border border-slate-800 rounded-2xl p-4 shadow-2xl flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               {focusStatus === 'active' ? (
@@ -683,12 +665,11 @@
             </div>
           </div>
 
-          {/* Content Material Full-Width Container */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
             <div className="p-6 sm:p-10 space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
                 <span className="bg-blue-500/10 text-blue-400 text-xs font-bold px-3 py-1 rounded-lg border border-blue-500/20">
-                  IPS Kelas {selectedMaterial.kelas} • Semester {selectedMaterial.semester}
+                  IPS Kelas {selectedMaterial.kelas} • Semester {selectedMaterial.semester || 1}
                 </span>
                 <span className="text-slate-400 text-xs">Penerima: Kelas {appSession.kelas}{appSession.subKelas}</span>
               </div>
@@ -713,7 +694,6 @@
             </div>
           </div>
 
-          {/* Quiz Section Full-Width Container */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-10 shadow-xl">
             <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
               <CheckCircle className="text-emerald-500 w-6 h-6"/> Soal Latihan & Evaluasi
