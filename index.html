@@ -65,10 +65,10 @@
     import { createRoot } from 'react-dom/client';
     import { initializeApp } from 'firebase/app';
     import { getAuth, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
-    import { getFirestore, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+    import { getFirestore, doc, setDoc, collection, onSnapshot, serverTimestamp } from 'firebase/firestore';
     import { 
       BookOpen, Users, LogIn, CheckCircle, Award, ArrowLeft, LogOut, 
-      Clock, AlertTriangle, ShieldAlert, Sparkles, Maximize2, Minimize2
+      Clock, AlertTriangle, ShieldAlert, Sparkles, Maximize2, Minimize2, Loader2
     } from 'lucide-react';
 
     // Konfigurasi Firebase
@@ -93,80 +93,17 @@
       ? new BroadcastChannel('elearning_ips_realtime_channel')
       : null;
 
-    // DATA DEFAULT MATERI (Agar bisa langsung dibaca di HP/Perangkat Mana Saja)
-    const defaultMaterials = [
-      {
-        id: 'mat_1',
-        title: 'Interaksi Antarruang dan Letak Indonesia',
-        kelas: '7',
-        subKelasTarget: 'semua',
-        semester: '1',
-        durationMinutes: 15,
-        content: 'Ruang adalah tempat di permukaan bumi, baik secara keseluruhan maupun hanya sebagian yang digunakan oleh makhluk hidup untuk tinggal. Interaksi antarruang terjadi karena perbedaan karakteristik wilayah.',
-        source: 'Buku Paket IPS SMP Kelas 7 Kemendikbud',
-        imageUrl: 'https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?auto=format&fit=crop&w=800&q=80'
-      },
-      {
-        id: 'mat_2',
-        title: 'Pengaruh Interaksi Sosial Terhadap Kehidupan Sosial',
-        kelas: '8',
-        subKelasTarget: 'semua',
-        semester: '1',
-        durationMinutes: 20,
-        content: 'Interaksi sosial adalah hubungan sosial yang dinamis, menyangkut hubungan antara individu dengan individu, antara kelompok dengan kelompok, maupun antara individu dengan kelompok.',
-        source: 'Buku Paket IPS SMP Kelas 8 Kemendikbud',
-        imageUrl: 'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=800&q=80'
-      }
-    ];
-
-    // DATA DEFAULT SISWA (Agar daftar siswa muncul otomatis di dropdown HP)
-    const defaultStudents = [
-      { id: 'st_1', name: 'Ahmad Fauzi', kelas: '7', subKelas: 'A' },
-      { id: 'st_2', name: 'Siti Nurhaliza', kelas: '7', subKelas: 'A' },
-      { id: 'st_3', name: 'Budi Santoso', kelas: '8', subKelas: 'A' },
-      { id: 'st_4', name: 'Dewi Lestari', kelas: '9', subKelas: 'A' }
-    ];
-
-    // DATA DEFAULT KUIS
-    const defaultQuestions = [
-      {
-        id: 'q_1',
-        materialId: 'mat_1',
-        type: 'pg',
-        questionText: 'Tempat di permukaan bumi, baik secara keseluruhan maupun sebagian yang digunakan makhluk hidup untuk tinggal disebut...',
-        optionA: 'Ruang',
-        optionB: 'Waktu',
-        optionC: 'Wilayah',
-        optionD: 'Ekosistem',
-        correctAnswer: 'A'
-      }
-    ];
-
     function StudentApp() {
       const [appSession, setAppSession] = useState(() => {
         const saved = localStorage.getItem('elearning_student_session_v3');
         return saved ? JSON.parse(saved) : null;
       });
 
-      const [materials, setMaterials] = useState(() => {
-        const local = localStorage.getItem('elearning_materials_v3');
-        return (local && JSON.parse(local).length > 0) ? JSON.parse(local) : defaultMaterials;
-      });
-
-      const [questions, setQuestions] = useState(() => {
-        const local = localStorage.getItem('elearning_questions_v3');
-        return (local && JSON.parse(local).length > 0) ? JSON.parse(local) : defaultQuestions;
-      });
-
-      const [students, setStudents] = useState(() => {
-        const local = localStorage.getItem('elearning_students_v3');
-        return (local && JSON.parse(local).length > 0) ? JSON.parse(local) : defaultStudents;
-      });
-
-      const [scores, setScores] = useState(() => {
-        const local = localStorage.getItem('elearning_scores_v3');
-        return local ? JSON.parse(local) : [];
-      });
+      const [materials, setMaterials] = useState([]);
+      const [questions, setQuestions] = useState([]);
+      const [students, setStudents] = useState([]);
+      const [scores, setScores] = useState([]);
+      const [isLoading, setIsLoading] = useState(true);
 
       const [activeTab, setActiveTab] = useState('dashboard');
       const [selectedMaterial, setSelectedMaterial] = useState(null);
@@ -178,21 +115,58 @@
       const [loginSiswaSubKelas, setLoginSiswaSubKelas] = useState('A');
       const [loginSiswaName, setLoginSiswaName] = useState('');
 
-      // Sinkronisasi Perubahan Data
+      // Sinkronisasi Realtime Firebase Firestore Cloud Data
       useEffect(() => {
-        const handleStorageChange = () => {
-          const m = localStorage.getItem('elearning_materials_v3');
-          if (m) setMaterials(JSON.parse(m));
-          const q = localStorage.getItem('elearning_questions_v3');
-          if (q) setQuestions(JSON.parse(q));
-          const st = localStorage.getItem('elearning_students_v3');
-          if (st) setStudents(JSON.parse(st));
-          const sc = localStorage.getItem('elearning_scores_v3');
-          if (sc) setScores(JSON.parse(sc));
-        };
+        // Fetch Materials Cloud
+        const materialsRef = collection(db, 'artifacts', appId, 'public', 'data', 'materials');
+        const unsubMaterials = onSnapshot(materialsRef, (snapshot) => {
+          const cloudMaterials = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          if (cloudMaterials.length > 0) {
+            setMaterials(cloudMaterials);
+            localStorage.setItem('elearning_materials_v3', JSON.stringify(cloudMaterials));
+          } else {
+            const local = localStorage.getItem('elearning_materials_v3');
+            if (local) setMaterials(JSON.parse(local));
+          }
+          setIsLoading(false);
+        }, (err) => {
+          console.log("Membaca data lokal...");
+          const local = localStorage.getItem('elearning_materials_v3');
+          if (local) setMaterials(JSON.parse(local));
+          setIsLoading(false);
+        });
 
-        window.addEventListener('storage', handleStorageChange);
-        return () => window.removeEventListener('storage', handleStorageChange);
+        // Fetch Questions Cloud
+        const questionsRef = collection(db, 'artifacts', appId, 'public', 'data', 'questions');
+        const unsubQuestions = onSnapshot(questionsRef, (snapshot) => {
+          const cloudQuestions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          if (cloudQuestions.length > 0) {
+            setQuestions(cloudQuestions);
+            localStorage.setItem('elearning_questions_v3', JSON.stringify(cloudQuestions));
+          } else {
+            const local = localStorage.getItem('elearning_questions_v3');
+            if (local) setQuestions(JSON.parse(local));
+          }
+        }, () => {});
+
+        // Fetch Students Cloud
+        const studentsRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
+        const unsubStudents = onSnapshot(studentsRef, (snapshot) => {
+          const cloudStudents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          if (cloudStudents.length > 0) {
+            setStudents(cloudStudents);
+            localStorage.setItem('elearning_students_v3', JSON.stringify(cloudStudents));
+          } else {
+            const local = localStorage.getItem('elearning_students_v3');
+            if (local) setStudents(JSON.parse(local));
+          }
+        }, () => {});
+
+        return () => {
+          unsubMaterials();
+          unsubQuestions();
+          unsubStudents();
+        };
       }, []);
 
       useEffect(() => {
@@ -353,6 +327,12 @@
         const updatedScores = [newScore, ...scores];
         setScores(updatedScores);
         localStorage.setItem('elearning_scores_v3', JSON.stringify(updatedScores));
+
+        // Sync Hasil Kuis ke Firebase Cloud
+        try {
+          const scoreDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', newScore.id);
+          setDoc(scoreDocRef, { ...newScore, createdAt: serverTimestamp() }).catch(() => {});
+        } catch (err) {}
 
         const key = `${appSession.username}_${selectedMaterial.id}`;
         sendStudentPresenceSignal({
@@ -541,46 +521,53 @@
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {myClassMaterials.map(m => (
-                <div 
-                  key={m.id} 
-                  onClick={() => { setSelectedMaterial(m); setActiveTab('belajar'); }} 
-                  className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col hover:border-blue-500 cursor-pointer transition-all shadow-xl group"
-                >
-                  {m.imageUrl && (
-                    <div className="h-48 bg-slate-950 overflow-hidden">
-                      <img src={m.imageUrl} alt={m.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                    </div>
-                  )}
-                  <div className="p-5 flex-1 flex flex-col">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="bg-blue-500/10 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-500/20">
-                        Semester {m.semester}
-                      </span>
-                      <span className="text-[11px] text-amber-400 font-bold flex items-center gap-1">
-                        <Clock className="w-3 h-3" /> {m.durationMinutes} Mnt
-                      </span>
-                    </div>
+            {isLoading ? (
+              <div className="p-12 text-center text-slate-400 flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                <p className="text-xs font-semibold">Mengambil materi terbaru dari Guru...</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {myClassMaterials.map(m => (
+                  <div 
+                    key={m.id} 
+                    onClick={() => { setSelectedMaterial(m); setActiveTab('belajar'); }} 
+                    className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col hover:border-blue-500 cursor-pointer transition-all shadow-xl group"
+                  >
+                    {m.imageUrl && (
+                      <div className="h-48 bg-slate-950 overflow-hidden">
+                        <img src={m.imageUrl} alt={m.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                      </div>
+                    )}
+                    <div className="p-5 flex-1 flex flex-col">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="bg-blue-500/10 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-500/20">
+                          Semester {m.semester}
+                        </span>
+                        <span className="text-[11px] text-amber-400 font-bold flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> {m.durationMinutes} Mnt
+                        </span>
+                      </div>
 
-                    <h3 className="font-bold text-white text-base mb-2 leading-snug">{m.title}</h3>
-                    <p className="text-xs text-slate-400 line-clamp-3 mb-4 leading-relaxed">{m.content}</p>
+                      <h3 className="font-bold text-white text-base mb-2 leading-snug">{m.title}</h3>
+                      <p className="text-xs text-slate-400 line-clamp-3 mb-4 leading-relaxed">{m.content}</p>
 
-                    <div className="mt-auto pt-4 border-t border-slate-800 text-xs text-blue-400 font-semibold flex items-center justify-between">
-                      <span>Buka & Baca Materi</span>
-                      <ArrowLeft className="w-3.5 h-3.5 rotate-180" />
+                      <div className="mt-auto pt-4 border-t border-slate-800 text-xs text-blue-400 font-semibold flex items-center justify-between">
+                        <span>Buka & Baca Materi</span>
+                        <ArrowLeft className="w-3.5 h-3.5 rotate-180" />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
 
-              {myClassMaterials.length === 0 && (
-                <div className="col-span-full p-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-2xl">
-                  <BookOpen className="w-10 h-10 mx-auto mb-2 text-slate-600"/>
-                  <p className="font-semibold text-xs">Belum ada materi khusus untuk Kelas {appSession.kelas}{appSession.subKelas}.</p>
-                </div>
-              )}
-            </div>
+                {myClassMaterials.length === 0 && (
+                  <div className="col-span-full p-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-2xl">
+                    <BookOpen className="w-10 h-10 mx-auto mb-2 text-slate-600"/>
+                    <p className="font-semibold text-xs">Belum ada materi khusus yang dibuat Guru untuk Kelas {appSession.kelas}{appSession.subKelas}.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </main>
         </div>
       );
