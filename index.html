@@ -135,37 +135,44 @@
         initAuth();
       }, []);
 
-      // Fungsi Sinkronisasi Data Firestore (Dua Jalur Penyimpanan)
+      // Fungsi Sinkronisasi Luas dari Berbagai Koleksi / Dokumen Firestore
       const fetchFirestoreData = async () => {
         setIsSyncing(true);
-        try {
-          // Path 1: Ambil data dari koleksi terpisah 'students'
-          const studentsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
-          const studentsSnap = await getDocs(studentsColRef);
-          let fetchedStudents = [];
-          
-          if (!studentsSnap.empty) {
-            fetchedStudents = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-          }
+        let allStudents = [];
 
-          // Path 2: Ambil data dari dokumen tunggal 'public/data'
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data');
-          const docSnap = await getDocs(collection(db, 'artifacts', appId, 'public'));
-          
-          onSnapshot(docRef, (snapshot) => {
+        try {
+          // 1. Ambil dari Subkoleksi 'students' di bawah artifacts
+          try {
+            const subColRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
+            const subSnap = await getDocs(subColRef);
+            if (!subSnap.empty) {
+              subSnap.docs.forEach(doc => {
+                allStudents.push({ id: doc.id, ...doc.data() });
+              });
+            }
+          } catch(e) {}
+
+          // 2. Ambil dari Koleksi Root 'students' / 'siswa'
+          try {
+            const rootColRef = collection(db, 'students');
+            const rootSnap = await getDocs(rootColRef);
+            if (!rootSnap.empty) {
+              rootSnap.docs.forEach(doc => {
+                allStudents.push({ id: doc.id, ...doc.data() });
+              });
+            }
+          } catch(e) {}
+
+          // 3. Realtime Listener untuk Dokumen Tunggal Data utama
+          const mainDocRef = doc(db, 'artifacts', appId, 'public', 'data');
+          onSnapshot(mainDocRef, (snapshot) => {
             if (snapshot.exists()) {
               const data = snapshot.data();
-              if (data.students && Array.isArray(data.students)) {
-                // Gabungkan data tanpa duplikat
-                const combined = [...fetchedStudents, ...data.students];
-                const uniqueStudents = Array.from(new Set(combined.map(s => s.id || s.name)))
-                  .map(id => combined.find(s => (s.id || s.name) === id));
-
-                setStudents(uniqueStudents);
-                localStorage.setItem('elearning_students_v3', JSON.stringify(uniqueStudents));
-              } else if (fetchedStudents.length > 0) {
-                setStudents(fetchedStudents);
-                localStorage.setItem('elearning_students_v3', JSON.stringify(fetchedStudents));
+              
+              // Cek berbagai nama properti yang mungkin digunakan oleh Portal Guru
+              const docStudents = data.students || data.studentList || data.daftarSiswa || data.siswa || [];
+              if (Array.isArray(docStudents) && docStudents.length > 0) {
+                allStudents = [...allStudents, ...docStudents];
               }
 
               if (data.materials) {
@@ -176,13 +183,34 @@
                 setQuestions(data.questions);
                 localStorage.setItem('elearning_questions_v3', JSON.stringify(data.questions));
               }
-            } else if (fetchedStudents.length > 0) {
-              setStudents(fetchedStudents);
-              localStorage.setItem('elearning_students_v3', JSON.stringify(fetchedStudents));
+            }
+
+            // Unifikasi data siswa & bersihkan duplikat
+            if (allStudents.length > 0) {
+              const uniqueMap = new Map();
+              allStudents.forEach(st => {
+                const nameKey = (st.name || st.nama || st.studentName || '').toLowerCase().trim();
+                const classKey = String(st.kelas || st.class || '').trim();
+                const subKey = String(st.subKelas || st.rombel || st.subClass || '').trim().toUpperCase();
+                
+                if (nameKey) {
+                  uniqueMap.set(`${nameKey}_${classKey}_${subKey}`, {
+                    id: st.id || 'st_' + Math.random(),
+                    name: st.name || st.nama || st.studentName,
+                    kelas: classKey,
+                    subKelas: subKey
+                  });
+                }
+              });
+
+              const cleanStudents = Array.from(uniqueMap.values());
+              setStudents(cleanStudents);
+              localStorage.setItem('elearning_students_v3', JSON.stringify(cleanStudents));
             }
           });
+
         } catch (e) {
-          console.error("Gagal sinkronisasi Firestore:", e);
+          console.error("Gagal melakukan sync:", e);
         } finally {
           setIsSyncing(false);
         }
@@ -326,11 +354,15 @@
         setSelectedMaterial(null);
       };
 
-      // Normalisasi & Filter Siswa
+      // Normalisasi Fleksibel Pencocokan Kelas & Sub-Kelas
       const filteredStudents = students.filter(s => {
-        const kelasMatch = String(s.kelas || s.class || '').trim() === String(loginSiswaKelas).trim();
-        const subKelasMatch = String(s.subKelas || s.rombel || s.subClass || '').trim().toUpperCase() === String(loginSiswaSubKelas).trim().toUpperCase();
-        return kelasMatch && subKelasMatch;
+        const studentClass = String(s.kelas || s.class || '').trim();
+        const studentSub = String(s.subKelas || s.rombel || s.subClass || '').trim().toUpperCase();
+
+        const selectedClass = String(loginSiswaKelas).trim();
+        const selectedSub = String(loginSiswaSubKelas).trim().toUpperCase();
+
+        return studentClass === selectedClass && (studentSub === selectedSub || !studentSub);
       });
 
       if (!appSession) {
@@ -348,15 +380,16 @@
                 <p className="text-slate-400 text-xs mt-1">E-Learning Space & Interactive Student Module</p>
               </div>
 
-              <div className="flex justify-end mb-4">
+              <div className="flex justify-between items-center mb-4 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-[11px] text-slate-400 font-medium">Total Siswa Terdeteksi: <strong className="text-white">{students.length}</strong></span>
                 <button 
                   type="button"
                   onClick={fetchFirestoreData}
                   disabled={isSyncing}
-                  className="flex items-center gap-1.5 text-[11px] font-medium text-blue-400 hover:text-blue-300 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-xl transition-all"
+                  className="flex items-center gap-1.5 text-[11px] font-semibold text-blue-400 hover:text-blue-300 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-lg transition-all"
                 >
                   <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
-                  {isSyncing ? 'Menyingkronkan...' : 'Refresh Data Siswa'}
+                  {isSyncing ? 'Syncing...' : 'Muat Ulang Data'}
                 </button>
               </div>
 
@@ -413,7 +446,7 @@
                     >
                       <option value="">-- Pilih Nama Siswa Terdaftar ({filteredStudents.length} siswa) --</option>
                       {filteredStudents.map((s, idx) => (
-                        <option key={s.id || idx} value={s.name || s.nama}>{s.name || s.nama}</option>
+                        <option key={s.id || idx} value={s.name}>{s.name}</option>
                       ))}
                     </select>
                   ) : (
@@ -426,8 +459,8 @@
                         required
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 text-xs focus:border-blue-500 outline-none"
                       />
-                      <p className="text-[10px] text-amber-400">
-                        * Belum ada daftar nama otomatis untuk Kelas {loginSiswaKelas}{loginSiswaSubKelas}. Silakan ketik nama Anda atau klik "Refresh Data Siswa" di atas.
+                      <p className="text-[10px] text-amber-400 leading-tight">
+                        * Belum ada nama terdaftar untuk Kelas {loginSiswaKelas}{loginSiswaSubKelas}. Pastikan Portal Guru telah menekan tombol "Simpan ke Database Cloud", lalu klik "Muat Ulang Data".
                       </p>
                     </div>
                   )}
