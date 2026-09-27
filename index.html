@@ -132,26 +132,27 @@
       const [loginSiswaSubKelas, setLoginSiswaSubKelas] = useState('A');
       const [loginSiswaName, setLoginSiswaName] = useState('');
 
-      // SINKRONISASI REALTIME UTAMA: Membaca Firestore secara menyeluruh
+      // SINKRONISASI FIRESTORE & LOCAL STORAGE
       useEffect(() => {
+        // 1. Coba mendengarkan koleksi Firestore
         const materialsRef = collection(db, 'artifacts', appId, 'public', 'data', 'materials');
-
         const unsubscribe = onSnapshot(materialsRef, (snapshot) => {
-          const fetchedMaterials = [];
-          snapshot.forEach((docSnap) => {
-            fetchedMaterials.push({ id: docSnap.id, ...docSnap.data() });
-          });
-
-          setMaterials(fetchedMaterials);
-          localStorage.setItem('elearning_materials_v3', JSON.stringify(fetchedMaterials));
-        }, (error) => {
-          console.error("Firestore Listener Fallback:", error);
+          if (!snapshot.empty) {
+            const fetched = [];
+            snapshot.forEach((docSnap) => {
+              fetched.push({ id: docSnap.id, ...docSnap.data() });
+            });
+            setMaterials(fetched);
+            localStorage.setItem('elearning_materials_v3', JSON.stringify(fetched));
+          }
+        }, (err) => {
+          console.log("Menggunakan storage lokal");
         });
 
         return () => unsubscribe();
       }, []);
 
-      // Sinkronisasi Storage & BroadcastChannel
+      // 2. Sinkronisasi Perubahan LocalStorage (antar Tab/Window)
       useEffect(() => {
         const handleStorageChange = () => {
           const m = localStorage.getItem('elearning_materials_v3');
@@ -167,6 +168,29 @@
         window.addEventListener('storage', handleStorageChange);
         return () => window.removeEventListener('storage', handleStorageChange);
       }, []);
+
+      // 3. BroadcastChannel Listener untuk update instan
+      useEffect(() => {
+        if (!broadcast) return;
+        const handleMessage = (event) => {
+          const { type, payload } = event.data || {};
+          
+          if (type === 'MATERIAL_UPDATED' || type === 'MATERIAL_DELETED' || type === 'DATA_CHANGED') {
+            const m = localStorage.getItem('elearning_materials_v3');
+            if (m) setMaterials(JSON.parse(m));
+          }
+
+          if (type === 'TEACHER_RESET_STATUS' && appSession) {
+            if (payload?.studentName === appSession.username) {
+              showNotification("Guru telah mereset status Anda! Silakan lanjutkan membaca.");
+              window.dispatchEvent(new CustomEvent('RESET_FOCUS_BY_TEACHER'));
+            }
+          }
+        };
+
+        broadcast.addEventListener('message', handleMessage);
+        return () => broadcast.removeEventListener('message', handleMessage);
+      }, [appSession]);
 
       useEffect(() => {
         if (appSession) {
@@ -204,26 +228,6 @@
         };
         initAuth();
       }, []);
-
-      useEffect(() => {
-        if (!broadcast) return;
-        const handleMessage = (event) => {
-          const { type, payload } = event.data || {};
-          if (type === 'TEACHER_RESET_STATUS' && appSession) {
-            if (payload.studentName === appSession.username) {
-              showNotification("Guru telah mereset status Anda! Silakan lanjutkan membaca.");
-              window.dispatchEvent(new CustomEvent('RESET_FOCUS_BY_TEACHER'));
-            }
-          }
-          if (type === 'MATERIAL_UPDATED' || type === 'MATERIAL_DELETED') {
-            const m = localStorage.getItem('elearning_materials_v3');
-            if (m) setMaterials(JSON.parse(m));
-          }
-        };
-
-        broadcast.addEventListener('message', handleMessage);
-        return () => broadcast.removeEventListener('message', handleMessage);
-      }, [appSession]);
 
       const showNotification = (msg) => {
         setNotification(msg);
@@ -448,10 +452,12 @@
         );
       }
 
-      // PERBAIKAN LOGIKA FILTERING: Mengabaikan tipe data (String vs Number)
+      // PERBAIKAN FILTER KELAS MATERI SUPAYA SELALU TAMPIL
       const myClassMaterials = materials.filter(m => {
         if (!m) return false;
-        const matchKelas = String(m.kelas) === String(appSession.kelas);
+        // Jika materi tidak memiliki kriteria kelas, atau cocok dengan tingkat kelas siswa
+        if (!m.kelas) return true;
+        const matchKelas = String(m.kelas).includes(String(appSession.kelas));
         const matchSub = !m.subKelasTarget || m.subKelasTarget === 'semua' || String(m.subKelasTarget).toUpperCase() === String(appSession.subKelas).toUpperCase();
         return matchKelas && matchSub;
       });
@@ -512,7 +518,7 @@
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {myClassMaterials.map(m => (
                 <div 
-                  key={m.id} 
+                  key={m.id || m.title} 
                   onClick={() => { setSelectedMaterial(m); setActiveTab('belajar'); }} 
                   className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col hover:border-blue-500 cursor-pointer transition-all shadow-xl group"
                 >
