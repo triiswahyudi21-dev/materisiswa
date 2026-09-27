@@ -70,7 +70,7 @@
     import { createRoot } from 'react-dom/client';
     import { initializeApp } from 'firebase/app';
     import { getAuth, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
-    import { getFirestore, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+    import { getFirestore, doc, setDoc, onSnapshot, collection, serverTimestamp } from 'firebase/firestore';
     import { 
       BookOpen, Users, LogIn, CheckCircle, Award, ArrowLeft, LogOut, 
       Clock, AlertTriangle, ShieldAlert, Sparkles, Maximize2, Minimize2
@@ -137,7 +137,39 @@
       const [loginSiswaSubKelas, setLoginSiswaSubKelas] = useState('A');
       const [loginSiswaName, setLoginSiswaName] = useState('');
 
-      // Sinkronisasi Perubahan Data
+      // SINKRONISASI REALTIME FIREBASE UNTUK SOAL, MATERI, DAN SISWA
+      useEffect(() => {
+        // Fetch Soal Realtime dari Firestore
+        try {
+          const questionsRef = doc(db, 'artifacts', appId, 'public', 'data_questions');
+          const unsubQuestions = onSnapshot(questionsRef, (docSnap) => {
+            if (docSnap.exists() && docSnap.data().list) {
+              const qList = docSnap.data().list;
+              setQuestions(qList);
+              localStorage.setItem('elearning_questions_v3', JSON.stringify(qList));
+            }
+          }, (err) => console.log("Firebase sync fallback ke local"));
+          
+          // Fetch Materi Realtime dari Firestore
+          const materialsRef = doc(db, 'artifacts', appId, 'public', 'data_materials');
+          const unsubMaterials = onSnapshot(materialsRef, (docSnap) => {
+            if (docSnap.exists() && docSnap.data().list) {
+              const mList = docSnap.data().list;
+              setMaterials(mList);
+              localStorage.setItem('elearning_materials_v3', JSON.stringify(mList));
+            }
+          });
+
+          return () => {
+            unsubQuestions();
+            unsubMaterials();
+          };
+        } catch (e) {
+          console.log("Menggunakan penyimpanan lokal fallback");
+        }
+      }, []);
+
+      // Sinkronisasi Perubahan Data Local Storage
       useEffect(() => {
         const handleStorageChange = () => {
           const m = localStorage.getItem('elearning_materials_v3');
@@ -279,10 +311,12 @@
         setSelectedMaterial(null);
       };
 
-      const handleSubmitQuiz = (e) => {
+      const handleSubmitQuiz = async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
-        const matQs = questions.filter(q => q.materialId === selectedMaterial.id);
+        
+        // Filter soal berdasarkan ID materi (pencocokan string tipat)
+        const matQs = questions.filter(q => String(q.materialId) === String(selectedMaterial.id));
 
         let correct = 0;
         matQs.forEach(q => {
@@ -313,6 +347,14 @@
         const updatedScores = [newScore, ...scores];
         setScores(updatedScores);
         localStorage.setItem('elearning_scores_v3', JSON.stringify(updatedScores));
+
+        // Kirim Nilai ke Firestore
+        try {
+          const scoreDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', newScore.id);
+          await setDoc(scoreDocRef, { ...newScore, lastUpdated: serverTimestamp() });
+        } catch (e) {
+          console.log("Nilai tersimpan secara lokal");
+        }
 
         const key = `${appSession.username}_${selectedMaterial.id}`;
         sendStudentPresenceSignal({
@@ -613,8 +655,9 @@
         };
       }, [remainingSeconds]);
 
-      const matQuestions = questions.filter(q => q.materialId === selectedMaterial.id);
-      const alreadyTaken = scores.some(s => s.materialId === selectedMaterial.id && s.studentName === appSession.username);
+      // FILTER SOAL DENGAN PENCOCOKAN STRING FLEKSIBEL
+      const matQuestions = questions.filter(q => String(q.materialId) === String(selectedMaterial.id));
+      const alreadyTaken = scores.some(s => String(s.materialId) === String(selectedMaterial.id) && s.studentName === appSession.username);
 
       const mins = Math.floor(remainingSeconds / 60);
       const secs = remainingSeconds % 60;
@@ -706,7 +749,7 @@
             ) : (
               <form onSubmit={onSubmitQuiz} className="space-y-6">
                 {matQuestions.map((q, idx) => (
-                  <div key={q.id} className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
+                  <div key={q.id || idx} className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
                     <p className="font-semibold text-white text-sm sm:text-base leading-relaxed flex items-start gap-2">
                       <span className="bg-blue-600 text-white w-6 h-6 shrink-0 flex items-center justify-center rounded-full text-xs font-bold">{idx + 1}</span>
                       <span>{q.questionText}</span>
