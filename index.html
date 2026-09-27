@@ -3,25 +3,47 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Portal Siswa - E-Learning IPS</title>
+  <title>Portal Siswa - E-Learning IPS SMP/MTs</title>
 
-  <!-- Google Font & Tailwind CSS -->
+  <!-- Google Font: Plus Jakarta Sans -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
 
   <!-- Babel Standalone untuk JSX -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <style>
-    body { font-family: 'Plus Jakarta Sans', sans-serif; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #0f172a; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+    html, body, #root {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #090d16;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e293b;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #334155;
+    }
   </style>
 
-  <!-- Import Map React & Firebase -->
+  <!-- Import Map untuk React, Firebase, dan Lucide Icons -->
   <script type="importmap">
     {
       "imports": {
@@ -35,21 +57,21 @@
     }
   </script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen antialiased selection:bg-blue-500 selection:text-white">
-  <div id="root"></div>
+<body class="bg-slate-950 text-slate-100 antialiased selection:bg-blue-500 selection:text-white">
+  <div id="root" class="w-full h-full"></div>
 
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect } from 'react';
     import { createRoot } from 'react-dom/client';
     import { initializeApp } from 'firebase/app';
     import { getAuth, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
-    import { getFirestore, collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
+    import { getFirestore, doc, setDoc, serverTimestamp } from 'firebase/firestore';
     import { 
-      BookOpen, Clock, AlertTriangle, LogIn, LogOut, 
-      ArrowLeft, Award, Send, Sparkles, UserCheck
+      BookOpen, Users, LogIn, CheckCircle, Award, ArrowLeft, LogOut, 
+      Clock, AlertTriangle, ShieldAlert, Sparkles, Maximize2, Minimize2
     } from 'lucide-react';
 
-    // Konfigurasi Firebase
+    // Konfigurasi Firebase Fallback
     const firebaseConfig = {
       apiKey: "AIzaSyD3M8FfqHdzCRO3VCKB24xPEcEZgVVK--M",
       authDomain: "gen-lang-client-0031221493.firebaseapp.com",
@@ -66,49 +88,97 @@
     const db = getFirestore(app);
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'elearning-ips-v3';
 
-    // BroadcastChannel Sync Realtime
+    // BroadcastChannel untuk Sync Realtime antar Tab Browser
     const broadcast = typeof window !== 'undefined' && 'BroadcastChannel' in window
       ? new BroadcastChannel('elearning_ips_realtime_channel')
       : null;
 
+    const defaultMaterials = [];
+    const defaultStudents = [];
+
     function StudentApp() {
-      const [studentSession, setStudentSession] = useState(() => {
-        const saved = localStorage.getItem('elearning_siswa_session_v3');
+      const [appSession, setAppSession] = useState(() => {
+        const saved = localStorage.getItem('elearning_student_session_v3');
         return saved ? JSON.parse(saved) : null;
       });
 
-      const [materials, setMaterials] = useState([]);
-      const [questions, setQuestions] = useState([]);
-      const [studentsList, setStudentsList] = useState([]); // Daftar Siswa dari Firestore
+      const [materials, setMaterials] = useState(() => {
+        const local = localStorage.getItem('elearning_materials_v3');
+        return local ? JSON.parse(local) : defaultMaterials;
+      });
+
+      const [questions, setQuestions] = useState(() => {
+        const local = localStorage.getItem('elearning_questions_v3');
+        return local ? JSON.parse(local) : [];
+      });
+
+      const [students, setStudents] = useState(() => {
+        const local = localStorage.getItem('elearning_students_v3');
+        return local ? JSON.parse(local) : defaultStudents;
+      });
+
       const [scores, setScores] = useState(() => {
         const local = localStorage.getItem('elearning_scores_v3');
         return local ? JSON.parse(local) : [];
       });
 
+      const [activeTab, setActiveTab] = useState('dashboard');
       const [selectedMaterial, setSelectedMaterial] = useState(null);
-      const [timerSeconds, setTimerSeconds] = useState(0);
-      const [timerActive, setTimerActive] = useState(false);
-      const [isWarningState, setIsWarningState] = useState(false);
-      const [isReadCompleted, setIsReadCompleted] = useState(false);
-      const [quizMode, setQuizMode] = useState(false);
-      const [userAnswers, setUserAnswers] = useState({});
-      const [quizResult, setQuizResult] = useState(null);
+      const [notification, setNotification] = useState(null);
+      const [isFullscreen, setIsFullscreen] = useState(false);
 
-      // State Pilihan Login Siswa
-      const [selectedKelas, setSelectedKelas] = useState('7');
-      const [selectedSubKelas, setSelectedSubKelas] = useState('A');
-      const [selectedStudentId, setSelectedStudentId] = useState('');
+      // Form Login Siswa State
+      const [loginSiswaKelas, setLoginSiswaKelas] = useState('7');
+      const [loginSiswaSubKelas, setLoginSiswaSubKelas] = useState('A');
+      const [loginSiswaName, setLoginSiswaName] = useState('');
 
-      // Persistence Session
+      // Sinkronisasi Perubahan Data
       useEffect(() => {
-        if (studentSession) {
-          localStorage.setItem('elearning_siswa_session_v3', JSON.stringify(studentSession));
-        } else {
-          localStorage.removeItem('elearning_siswa_session_v3');
-        }
-      }, [studentSession]);
+        const handleStorageChange = () => {
+          const m = localStorage.getItem('elearning_materials_v3');
+          if (m) setMaterials(JSON.parse(m));
+          const q = localStorage.getItem('elearning_questions_v3');
+          if (q) setQuestions(JSON.parse(q));
+          const st = localStorage.getItem('elearning_students_v3');
+          if (st) setStudents(JSON.parse(st));
+          const sc = localStorage.getItem('elearning_scores_v3');
+          if (sc) setScores(JSON.parse(sc));
+        };
 
-      // REALTIME FIRESTORE LISTENERS
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
+      }, []);
+
+      useEffect(() => {
+        if (appSession) {
+          localStorage.setItem('elearning_student_session_v3', JSON.stringify(appSession));
+        } else {
+          localStorage.removeItem('elearning_student_session_v3');
+        }
+      }, [appSession]);
+
+      // Detect Fullscreen State
+      useEffect(() => {
+        const handleFsChange = () => {
+          setIsFullscreen(!!document.fullscreenElement);
+        };
+        document.addEventListener('fullscreenchange', handleFsChange);
+        return () => document.removeEventListener('fullscreenchange', handleFsChange);
+      }, []);
+
+      const toggleFullscreen = () => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch((e) => {
+            console.log(e);
+          });
+        } else {
+          if (document.exitFullscreen) {
+            document.exitFullscreen();
+          }
+        }
+      };
+
+      // Firebase Auth Listener
       useEffect(() => {
         const initAuth = async () => {
           try {
@@ -118,271 +188,191 @@
               await signInAnonymously(auth);
             }
           } catch (e) {
-            console.log("Firebase fallback mode");
+            console.log("Firebase fallback lokal aktif");
           }
         };
         initAuth();
-
-        // 1. Sync Daftar Siswa dari Portal Guru
-        const studentsCol = collection(db, 'artifacts', appId, 'public', 'data', 'students');
-        const unsubStudents = onSnapshot(studentsCol, (snapshot) => {
-          const list = snapshot.docs.map(doc => doc.data());
-          setStudentsList(list);
-          localStorage.setItem('elearning_students_v3', JSON.stringify(list));
-        }, () => {
-          const local = localStorage.getItem('elearning_students_v3');
-          if (local) setStudentsList(JSON.parse(local));
-        });
-
-        // 2. Sync Materi dari Cloud Firestore
-        const materialsCol = collection(db, 'artifacts', appId, 'public', 'data', 'materials');
-        const unsubMaterials = onSnapshot(materialsCol, (snapshot) => {
-          const list = snapshot.docs.map(doc => doc.data());
-          setMaterials(list);
-          localStorage.setItem('elearning_materials_v3', JSON.stringify(list));
-        }, () => {
-          const local = localStorage.getItem('elearning_materials_v3');
-          if (local) setMaterials(JSON.parse(local));
-        });
-
-        // 3. Sync Soal Kuis dari Cloud Firestore
-        const questionsCol = collection(db, 'artifacts', appId, 'public', 'data', 'questions');
-        const unsubQuestions = onSnapshot(questionsCol, (snapshot) => {
-          const list = snapshot.docs.map(doc => doc.data());
-          setQuestions(list);
-          localStorage.setItem('elearning_questions_v3', JSON.stringify(list));
-        }, () => {
-          const local = localStorage.getItem('elearning_questions_v3');
-          if (local) setQuestions(JSON.parse(local));
-        });
-
-        return () => {
-          unsubStudents();
-          unsubMaterials();
-          unsubQuestions();
-        };
       }, []);
 
-      // Broadcast Listener
+      // BroadcastChannel Listener Reset Status
       useEffect(() => {
         if (!broadcast) return;
         const handleMessage = (event) => {
           const { type, payload } = event.data || {};
-          if (type === 'TEACHER_RESET_STATUS' && studentSession) {
-            if (payload.studentName === studentSession.name) {
-              setIsWarningState(false);
-              setTimerActive(true);
+          if (type === 'TEACHER_RESET_STATUS' && appSession) {
+            if (payload.studentName === appSession.username) {
+              showNotification("Guru telah mereset status Anda! Silakan lanjutkan membaca.");
+              window.dispatchEvent(new CustomEvent('RESET_FOCUS_BY_TEACHER'));
             }
           }
         };
+
         broadcast.addEventListener('message', handleMessage);
         return () => broadcast.removeEventListener('message', handleMessage);
-      }, [studentSession]);
+      }, [appSession]);
 
-      // Peringatan Pindah Tab
-      useEffect(() => {
-        const handleVisibilityChange = () => {
-          if (document.hidden && timerActive && selectedMaterial && studentSession) {
-            setIsWarningState(true);
-            setTimerActive(false);
+      const showNotification = (msg) => {
+        setNotification(msg);
+        setTimeout(() => setNotification(null), 4000);
+      };
 
-            const presKey = `${studentSession.id}_${selectedMaterial.id}`;
-            const updatePayload = {
-              id: presKey,
-              studentId: studentSession.id,
-              studentName: studentSession.name,
-              kelas: `${studentSession.kelas}${studentSession.subKelas}`,
-              materialId: selectedMaterial.id,
-              materialTitle: selectedMaterial.title,
-              remainingSeconds: timerSeconds,
-              status: 'warning',
-              lastUpdated: Date.now()
-            };
+      const sendStudentPresenceSignal = (presObj) => {
+        const currentData = JSON.parse(localStorage.getItem('elearning_live_monitor') || '{}');
+        currentData[presObj.id] = presObj;
+        localStorage.setItem('elearning_live_monitor', JSON.stringify(currentData));
 
-            if (broadcast) broadcast.postMessage({ type: 'STUDENT_PRESENCE_UPDATE', payload: updatePayload });
-            try {
-              const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_presence', presKey);
-              setDoc(docRef, updatePayload);
-            } catch (e) {}
-          }
-        };
-
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-      }, [timerActive, selectedMaterial, studentSession, timerSeconds]);
-
-      // Count Down Timer
-      useEffect(() => {
-        let interval = null;
-        if (timerActive && timerSeconds > 0) {
-          interval = setInterval(() => {
-            setTimerSeconds(prev => {
-              const nextVal = prev - 1;
-              if (selectedMaterial && studentSession) {
-                const presKey = `${studentSession.id}_${selectedMaterial.id}`;
-                const updatePayload = {
-                  id: presKey,
-                  studentId: studentSession.id,
-                  studentName: studentSession.name,
-                  kelas: `${studentSession.kelas}${studentSession.subKelas}`,
-                  materialId: selectedMaterial.id,
-                  materialTitle: selectedMaterial.title,
-                  remainingSeconds: nextVal,
-                  status: nextVal <= 0 ? 'completed' : 'active',
-                  lastUpdated: Date.now()
-                };
-
-                if (broadcast) broadcast.postMessage({ type: 'STUDENT_PRESENCE_UPDATE', payload: updatePayload });
-                try {
-                  const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_presence', presKey);
-                  setDoc(docRef, updatePayload);
-                } catch (e) {}
-              }
-
-              if (nextVal <= 0) {
-                setTimerActive(false);
-                setIsReadCompleted(true);
-                return 0;
-              }
-              return nextVal;
-            });
-          }, 1000);
+        if (broadcast) {
+          broadcast.postMessage({
+            type: 'STUDENT_PRESENCE_UPDATE',
+            payload: presObj
+          });
         }
-        return () => clearInterval(interval);
-      }, [timerActive, timerSeconds, selectedMaterial, studentSession]);
 
-      // Filter daftar siswa sesuai Kelas & Rombel yang dipilih
-      const filteredStudents = studentsList.filter(s => 
-        (s.kelas === selectedKelas || s.kelas === `Kelas ${selectedKelas}`) && 
-        (s.subKelas === selectedSubKelas || s.subKelas === `Rombel ${selectedSubKelas}`)
-      );
+        try {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_presence', presObj.id);
+          setDoc(docRef, { ...presObj, lastUpdated: serverTimestamp() }).catch(() => {});
+        } catch (e) {}
+      };
 
-      // Handle Submit Login (Siswa Memilih Namanya)
-      const handleStudentLogin = (e) => {
+      const handleSiswaLogin = (e) => {
         e.preventDefault();
-        const foundStudent = studentsList.find(s => s.id === selectedStudentId);
-        if (!foundStudent) return;
+        if (!loginSiswaName) {
+          showNotification("Silakan pilih atau masukkan nama siswa!");
+          return;
+        }
 
-        const stuSession = {
-          id: foundStudent.id,
-          name: foundStudent.name,
-          kelas: selectedKelas,
-          subKelas: selectedSubKelas
-        };
-
-        setStudentSession(stuSession);
-      };
-
-      // Buka Detail Materi
-      const handleOpenMaterial = (mat) => {
-        setSelectedMaterial(mat);
-        const durationSecs = (mat.durationMinutes || 15) * 60;
-        setTimerSeconds(durationSecs);
-        setTimerActive(true);
-        setIsWarningState(false);
-        setIsReadCompleted(false);
-        setQuizMode(false);
-        setUserAnswers({});
-        setQuizResult(null);
-
-        if (studentSession) {
-          const presKey = `${studentSession.id}_${mat.id}`;
-          const updatePayload = {
-            id: presKey,
-            studentId: studentSession.id,
-            studentName: studentSession.name,
-            kelas: `${studentSession.kelas}${studentSession.subKelas}`,
-            materialId: mat.id,
-            materialTitle: mat.title,
-            remainingSeconds: durationSecs,
-            status: 'active',
-            lastUpdated: Date.now()
-          };
-
-          if (broadcast) broadcast.postMessage({ type: 'STUDENT_PRESENCE_UPDATE', payload: updatePayload });
-          try {
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_presence', presKey);
-            setDoc(docRef, updatePayload);
-          } catch (e) {}
+        setAppSession({
+          username: loginSiswaName,
+          kelas: loginSiswaKelas,
+          subKelas: loginSiswaSubKelas
+        });
+        setActiveTab('dashboard');
+        showNotification(`Selamat datang ${loginSiswaName} (Kelas ${loginSiswaKelas}${loginSiswaSubKelas})!`);
+        
+        // Memicu fullscreen otomatis saat login jika didukung
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(() => {});
         }
       };
 
-      // Kirim Jawaban Kuis
-      const handleSubmitQuiz = () => {
-        const matQuestions = questions.filter(q => q.materialId === selectedMaterial.id);
-        if (matQuestions.length === 0) return;
+      const handleLogout = () => {
+        if (selectedMaterial && appSession) {
+          const key = `${appSession.username}_${selectedMaterial.id}`;
+          sendStudentPresenceSignal({
+            id: key,
+            studentName: appSession.username,
+            kelas: `${appSession.kelas}${appSession.subKelas}`,
+            materialId: selectedMaterial.id,
+            materialTitle: selectedMaterial.title,
+            status: 'offline',
+            remainingSeconds: 0,
+            lastUpdated: Date.now()
+          });
+        }
+        setAppSession(null);
+        setActiveTab('dashboard');
+        setSelectedMaterial(null);
+      };
 
-        let correctCount = 0;
-        matQuestions.forEach(q => {
-          const ans = userAnswers[q.id];
-          if (ans && ans.toString().trim().toLowerCase() === q.correctAnswer.toString().trim().toLowerCase()) {
-            correctCount++;
+      const handleSubmitQuiz = (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const matQs = questions.filter(q => q.materialId === selectedMaterial.id);
+
+        let correct = 0;
+        matQs.forEach(q => {
+          const userAns = (formData.get(q.id) || '').toString().trim().toLowerCase();
+          const targetAns = (q.correctAnswer || '').toString().trim().toLowerCase();
+
+          if (q.type === 'pg') {
+            if (userAns === targetAns) correct++;
+          } else {
+            if (userAns !== '' && (targetAns.includes(userAns) || userAns.includes(targetAns))) {
+              correct++;
+            }
           }
         });
 
-        const calculatedScore = Math.round((correctCount / matQuestions.length) * 100);
-        
-        const newScoreObj = {
-          id: 'score_' + Date.now(),
-          studentId: studentSession.id,
-          studentName: studentSession.name,
-          kelas: studentSession.kelas,
-          subKelas: studentSession.subKelas,
+        const finalScore = Math.round((correct / (matQs.length || 1)) * 100);
+
+        const newScore = {
+          id: 'sc_' + Date.now(),
           materialId: selectedMaterial.id,
           materialTitle: selectedMaterial.title,
-          score: calculatedScore,
+          studentName: appSession.username,
+          kelas: `${appSession.kelas}${appSession.subKelas}`,
+          score: finalScore,
           createdAt: Date.now()
         };
 
-        const updatedScores = [newScoreObj, ...scores];
+        const updatedScores = [newScore, ...scores];
         setScores(updatedScores);
         localStorage.setItem('elearning_scores_v3', JSON.stringify(updatedScores));
 
-        try {
-          const scoreDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', newScoreObj.id);
-          setDoc(scoreDocRef, newScoreObj);
-        } catch (e) {}
+        const key = `${appSession.username}_${selectedMaterial.id}`;
+        sendStudentPresenceSignal({
+          id: key,
+          studentName: appSession.username,
+          kelas: `${appSession.kelas}${appSession.subKelas}`,
+          materialId: selectedMaterial.id,
+          materialTitle: selectedMaterial.title,
+          status: 'completed',
+          remainingSeconds: 0,
+          lastUpdated: Date.now()
+        });
 
-        setQuizResult(calculatedScore);
+        showNotification(`Selesai! Nilai Anda: ${finalScore}/100`);
+        setActiveTab('dashboard');
+        setSelectedMaterial(null);
       };
 
-      // Screen 1: Form Login Siswa (PILIH NAMA)
-      if (!studentSession) {
+      if (!appSession) {
         return (
-          <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4 relative overflow-hidden">
+          <div className="w-full min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4 md:p-8 relative overflow-hidden">
             <div className="absolute -top-40 -left-40 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl pointer-events-none"></div>
-            <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-emerald-600/20 rounded-full blur-3xl pointer-events-none"></div>
+            <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none"></div>
 
-            <div className="w-full max-w-md bg-slate-900/90 backdrop-blur-xl border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative z-10">
-              <div className="text-center mb-6">
-                <div className="inline-flex p-3 bg-gradient-to-tr from-blue-600 to-emerald-500 rounded-2xl shadow-lg shadow-blue-500/30 mb-3">
+            <div className="w-full max-w-lg bg-slate-900/90 backdrop-blur-xl border border-slate-800 rounded-3xl p-8 shadow-2xl relative z-10">
+              <div className="text-center mb-8">
+                <div className="inline-flex p-3.5 bg-gradient-to-tr from-blue-600 to-indigo-500 rounded-2xl shadow-lg shadow-blue-500/30 mb-3">
                   <BookOpen className="w-8 h-8 text-white" />
                 </div>
-                <h1 className="text-2xl font-extrabold text-white tracking-tight">Portal Siswa E-Learning</h1>
-                <p className="text-slate-400 text-xs mt-1">Pilih kelas dan nama Anda untuk masuk ke ruang belajar</p>
+                <h1 className="text-2xl font-extrabold text-white tracking-tight">Portal Belajar Siswa IPS</h1>
+                <p className="text-slate-400 text-xs mt-1">E-Learning Space & Interactive Student Module</p>
               </div>
 
-              <form onSubmit={handleStudentLogin} className="space-y-4">
+              {notification && (
+                <div className="bg-red-500/20 border border-red-500/30 text-red-300 px-4 py-3 rounded-xl text-xs text-center mb-6">
+                  {notification}
+                </div>
+              )}
+
+              <form onSubmit={handleSiswaLogin} className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1">Tingkat Kelas</label>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1.5">Tingkat Kelas</label>
                     <select 
-                      value={selectedKelas} 
-                      onChange={(e) => { setSelectedKelas(e.target.value); setSelectedStudentId(''); }}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-blue-500"
+                      value={loginSiswaKelas}
+                      onChange={(e) => {
+                        setLoginSiswaKelas(e.target.value);
+                        setLoginSiswaName('');
+                      }}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 text-xs focus:border-blue-500 outline-none"
                     >
                       <option value="7">Kelas 7</option>
                       <option value="8">Kelas 8</option>
                       <option value="9">Kelas 9</option>
                     </select>
                   </div>
-
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1">Rombel / Sub-Kelas</label>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1.5">Rombel / Sub-Kelas</label>
                     <select 
-                      value={selectedSubKelas} 
-                      onChange={(e) => { setSelectedSubKelas(e.target.value); setSelectedStudentId(''); }}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-blue-500"
+                      value={loginSiswaSubKelas}
+                      onChange={(e) => {
+                        setLoginSiswaSubKelas(e.target.value);
+                        setLoginSiswaName('');
+                      }}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 text-xs focus:border-blue-500 outline-none"
                     >
                       <option value="A">Rombel A</option>
                       <option value="B">Rombel B</option>
@@ -393,31 +383,35 @@
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Pilih Nama Anda</label>
-                  <select 
-                    value={selectedStudentId} 
-                    onChange={(e) => setSelectedStudentId(e.target.value)}
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-blue-500"
-                  >
-                    <option value="">-- {filteredStudents.length > 0 ? 'Pilih Nama Siswa' : 'Belum Ada Data Siswa'} --</option>
-                    {filteredStudents.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.nisn || 'Siswa'})</option>
-                    ))}
-                  </select>
-                  {filteredStudents.length === 0 && (
-                    <p className="text-[11px] text-amber-400/80 mt-1.5 italic">
-                      * Data siswa untuk Kelas {selectedKelas}{selectedSubKelas} belum diinput oleh Guru di Portal Guru.
-                    </p>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5">Nama Lengkap Siswa</label>
+                  {students.filter(s => s.kelas === loginSiswaKelas && s.subKelas === loginSiswaSubKelas).length > 0 ? (
+                    <select 
+                      value={loginSiswaName}
+                      onChange={(e) => setLoginSiswaName(e.target.value)}
+                      required
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 text-xs focus:border-blue-500 outline-none"
+                    >
+                      <option value="">-- Pilih Nama Siswa Terdaftar --</option>
+                      {students
+                        .filter(s => s.kelas === loginSiswaKelas && s.subKelas === loginSiswaSubKelas)
+                        .map(s => (
+                          <option key={s.id} value={s.name}>{s.name}</option>
+                        ))}
+                    </select>
+                  ) : (
+                    <input 
+                      type="text" 
+                      placeholder="Ketik Nama Lengkap Siswa..."
+                      value={loginSiswaName}
+                      onChange={(e) => setLoginSiswaName(e.target.value)}
+                      required
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 text-xs focus:border-blue-500 outline-none"
+                    />
                   )}
                 </div>
 
-                <button 
-                  type="submit" 
-                  disabled={!selectedStudentId}
-                  className="w-full mt-2 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-blue-600/30 flex justify-center items-center gap-2 text-xs active:scale-95"
-                >
-                  <UserCheck className="w-4 h-4" /> Masuk Portal Pembelajaran
+                <button type="submit" className="w-full mt-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-blue-600/30 flex justify-center items-center gap-2 text-xs">
+                  <LogIn className="w-4 h-4"/> Masuk Pembelajaran Siswa
                 </button>
               </form>
             </div>
@@ -425,253 +419,317 @@
         );
       }
 
-      // Filter Materi Sesuai Kelas Siswa
-      const availableMaterials = materials.filter(m => {
-        const matchKelas = m.kelas === studentSession.kelas;
-        const matchSubKelas = m.subKelasTarget === 'semua' || m.subKelasTarget === studentSession.subKelas;
-        return matchKelas && matchSubKelas;
-      });
-
-      // Screen 2: Membaca Materi / Mengerjakan Evaluasi
-      if (selectedMaterial) {
-        const mins = Math.floor(timerSeconds / 60);
-        const secs = timerSeconds % 60;
-        const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-        const matQuestions = questions.filter(q => q.materialId === selectedMaterial.id);
-
+      if (activeTab === 'belajar' && selectedMaterial) {
         return (
-          <div className="min-h-screen bg-slate-950 text-slate-100 pb-12">
-            <div className="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 px-4 py-3">
-              <div className="max-w-4xl mx-auto flex justify-between items-center">
-                <button 
-                  onClick={() => { setSelectedMaterial(null); setTimerActive(false); }}
-                  className="text-slate-400 hover:text-white flex items-center gap-1 text-xs font-semibold"
-                >
-                  <ArrowLeft className="w-4 h-4"/> Kembalikan ke Daftar
-                </button>
-
-                <div className="flex items-center gap-3">
-                  <div className={`px-3 py-1.5 rounded-xl border flex items-center gap-2 text-xs font-bold font-mono ${isWarningState ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-300' : 'bg-slate-950 border-slate-800 text-amber-400'}`}>
-                    <Clock className="w-4 h-4 animate-spin text-amber-400" />
-                    Sisa Waktu: {timeStr}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6">
-              {isWarningState && (
-                <div className="bg-yellow-500/20 border border-yellow-500/40 p-4 rounded-2xl flex items-center gap-3 text-xs text-yellow-200 animate-pulse">
-                  <AlertTriangle className="w-6 h-6 text-yellow-400 shrink-0" />
-                  <div>
-                    <span className="font-bold">PERINGATAN SISWA:</span> Anda terdeteksi berpindah tab/membuka aplikasi lain. Kembalilah membaca materi ini agar guru dapat mengonfirmasi kehadiran Anda.
-                  </div>
-                </div>
-              )}
-
-              {!quizMode ? (
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-8 shadow-2xl space-y-6">
-                  {selectedMaterial.imageUrl && (
-                    <img src={selectedMaterial.imageUrl} alt={selectedMaterial.title} className="w-full h-64 sm:h-80 object-cover rounded-2xl" />
-                  )}
-
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="bg-blue-500/10 text-blue-400 text-[11px] font-bold px-2.5 py-1 rounded-lg border border-blue-500/20">
-                        Kelas {selectedMaterial.kelas} • IPS
-                      </span>
-                      <span className="text-slate-500 text-xs">• Oleh {selectedMaterial.createdBy || 'Guru Pengajar'}</span>
-                    </div>
-                    <h1 className="text-xl sm:text-2xl font-extrabold text-white leading-snug">{selectedMaterial.title}</h1>
-                  </div>
-
-                  <div className="prose prose-invert max-w-none text-slate-300 text-xs sm:text-sm leading-relaxed whitespace-pre-line border-t border-b border-slate-800 py-6">
-                    {selectedMaterial.content}
-                  </div>
-
-                  {selectedMaterial.source && (
-                    <p className="text-[11px] text-slate-500 italic">Sumber Referensi: {selectedMaterial.source}</p>
-                  )}
-
-                  <div className="pt-2 flex justify-end">
-                    <button 
-                      onClick={() => setQuizMode(true)}
-                      className={`px-6 py-3 rounded-xl font-bold text-xs flex items-center gap-2 shadow-lg transition-all active:scale-95 ${isReadCompleted || timerSeconds === 0 ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/30'}`}
-                    >
-                      <Sparkles className="w-4 h-4"/> Mulai Mengerjakan Soal Latihan & Evaluasi
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-8 shadow-2xl space-y-6">
-                  <div className="border-b border-slate-800 pb-4 flex justify-between items-center">
-                    <div>
-                      <h2 className="text-lg font-bold text-white">Soal Evaluasi Materi IPS</h2>
-                      <p className="text-slate-400 text-xs">{selectedMaterial.title}</p>
-                    </div>
-                    <button onClick={() => setQuizMode(false)} className="text-xs text-blue-400 hover:underline">
-                      Kembali Baca Materi
-                    </button>
-                  </div>
-
-                  {quizResult === null ? (
-                    <div className="space-y-6">
-                      {matQuestions.map((q, idx) => (
-                        <div key={q.id} className="bg-slate-950 p-4 sm:p-5 rounded-2xl border border-slate-800 space-y-3">
-                          <p className="font-semibold text-xs text-white">{idx + 1}. {q.questionText}</p>
-
-                          {q.type === 'pg' ? (
-                            <div className="space-y-2">
-                              {['A', 'B', 'C', 'D'].map((optKey) => {
-                                const optionLabel = q[`option${optKey}`];
-                                if (!optionLabel) return null;
-                                return (
-                                  <label key={optKey} className={`flex items-center gap-3 p-3 rounded-xl border text-xs cursor-pointer transition-all ${userAnswers[q.id] === optKey ? 'bg-blue-600/20 border-blue-500 text-white' : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'}`}>
-                                    <input 
-                                      type="radio" 
-                                      name={`q_${q.id}`} 
-                                      checked={userAnswers[q.id] === optKey} 
-                                      onChange={() => setUserAnswers(prev => ({ ...prev, [q.id]: optKey }))}
-                                      className="hidden" 
-                                    />
-                                    <span className="font-bold w-5 h-5 rounded-full bg-slate-800 flex justify-center items-center text-[10px]">{optKey}</span>
-                                    <span>{optionLabel}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <input 
-                              type="text" 
-                              placeholder="Ketikkan jawaban Anda di sini..."
-                              value={userAnswers[q.id] || ''} 
-                              onChange={(e) => setUserAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
-                              className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-white outline-none focus:border-blue-500"
-                            />
-                          )}
-                        </div>
-                      ))}
-
-                      {matQuestions.length === 0 && (
-                        <p className="text-center text-slate-500 text-xs py-8">Belum ada soal latihan yang dibuat oleh guru untuk materi ini.</p>
-                      )}
-
-                      {matQuestions.length > 0 && (
-                        <button 
-                          onClick={handleSubmitQuiz}
-                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-emerald-600/30 text-xs flex justify-center items-center gap-2 active:scale-95"
-                        >
-                          <Send className="w-4 h-4"/> Kirim Jawaban Evaluasi Saya
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 space-y-4">
-                      <div className="inline-flex p-4 bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30 mb-2">
-                        <Award className="w-12 h-12" />
-                      </div>
-                      <h3 className="text-xl font-bold text-white">Evaluasi Selesai!</h3>
-                      <div className="text-4xl font-extrabold text-emerald-400 font-mono">{quizResult} / 100</div>
-                      <p className="text-slate-400 text-xs max-w-sm mx-auto">
-                        Nilai Anda telah otomatis tersimpan dan terkirim ke Rekap Nilai Guru.
-                      </p>
-                      <button 
-                        onClick={() => { setSelectedMaterial(null); setQuizMode(false); }}
-                        className="mt-4 px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all"
-                      >
-                        Kembali ke Halaman Utama
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+          <StudentMaterialView 
+            selectedMaterial={selectedMaterial}
+            appSession={appSession}
+            questions={questions}
+            scores={scores}
+            isFullscreen={isFullscreen}
+            toggleFullscreen={toggleFullscreen}
+            onBack={() => { setActiveTab('dashboard'); setSelectedMaterial(null); }}
+            onSubmitQuiz={handleSubmitQuiz}
+            sendStudentPresenceSignal={sendStudentPresenceSignal}
+          />
         );
       }
 
-      // Screen 3: Halaman Utama Siswa (Daftar Materi IPS)
-      return (
-        <div className="min-h-screen bg-slate-950 text-slate-100">
-          <nav className="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40">
-            <div className="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center">
-              <div className="flex items-center gap-2.5">
-                <div className="bg-gradient-to-tr from-blue-600 to-emerald-500 p-2 rounded-xl text-white">
-                  <BookOpen className="w-5 h-5" />
-                </div>
-                <div>
-                  <h1 className="text-sm font-extrabold text-white">E-Learning IPS</h1>
-                  <p className="text-[10px] text-slate-400">Portal Siswa SMP/MTs</p>
-                </div>
-              </div>
+      const myClassMaterials = materials.filter(m => {
+        if (m.kelas !== appSession.kelas) return false;
+        if (m.subKelasTarget && m.subKelasTarget !== 'semua' && m.subKelasTarget !== appSession.subKelas) {
+          return false;
+        }
+        return true;
+      });
 
-              <div className="flex items-center gap-3">
-                <div className="text-right hidden sm:block">
-                  <div className="text-xs font-bold text-white">{studentSession.name}</div>
-                  <div className="text-[10px] text-emerald-400 font-semibold">Kelas {studentSession.kelas}{studentSession.subKelas}</div>
+      return (
+        <div className="w-full min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+          {notification && (
+            <div className="fixed top-4 right-4 z-50 bg-blue-600 text-white px-5 py-3 rounded-2xl shadow-xl font-bold text-xs animate-bounce border border-blue-400/30">
+              {notification}
+            </div>
+          )}
+
+          <nav className="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 w-full">
+            <div className="w-full px-4 sm:px-8">
+              <div className="flex justify-between h-16 items-center">
+                <div className="flex items-center gap-3 cursor-pointer" onClick={() => {setActiveTab('dashboard'); setSelectedMaterial(null);}}>
+                  <div className="bg-blue-600 p-2 rounded-xl text-white shadow-lg shadow-blue-600/30">
+                    <BookOpen className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-base font-extrabold text-white block leading-none">Portal Siswa IPS</span>
+                    <span className="text-[10px] text-slate-400">SMP/MTs Portal Belajar</span>
+                  </div>
                 </div>
-                <button 
-                  onClick={() => setStudentSession(null)} 
-                  className="p-2 text-slate-400 hover:text-red-400 bg-slate-950 border border-slate-800 rounded-xl transition-all" 
-                  title="Keluar"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
+
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={toggleFullscreen} 
+                    className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all"
+                    title={isFullscreen ? "Keluar Layar Penuh" : "Layar Penuh"}
+                  >
+                    {isFullscreen ? <Minimize2 className="w-3.5 h-3.5 text-amber-400" /> : <Maximize2 className="w-3.5 h-3.5 text-blue-400" />}
+                    <span className="hidden md:inline">{isFullscreen ? 'Keluar Fullscreen' : 'Layar Penuh'}</span>
+                  </button>
+
+                  <div className="text-right hidden sm:block">
+                    <div className="text-xs font-bold text-white">{appSession.username}</div>
+                    <div className="text-[10px] text-slate-400">
+                      Siswa Kelas {appSession.kelas}{appSession.subKelas}
+                    </div>
+                  </div>
+                  <button onClick={handleLogout} className="flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all">
+                    <LogOut className="w-3.5 h-3.5" /> Keluar
+                  </button>
+                </div>
               </div>
             </div>
           </nav>
 
-          <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-            <div className="bg-gradient-to-r from-blue-900/40 to-slate-900 border border-slate-800 p-6 rounded-3xl relative overflow-hidden shadow-xl">
-              <div className="relative z-10">
-                <span className="bg-blue-500/20 text-blue-300 text-[10px] font-bold px-2.5 py-1 rounded-lg border border-blue-500/30">
-                  Selamat Datang, {studentSession.name}
-                </span>
-                <h2 className="text-lg sm:text-xl font-bold text-white mt-2">Daftar Materi Pembelajaran IPS Terbit</h2>
-                <p className="text-slate-400 text-xs mt-1">Pilih materi IPS di bawah ini untuk mulai membaca dan mengerjakan kuis evaluasi.</p>
+          <main className="flex-1 w-full px-4 sm:px-8 py-8 space-y-6">
+            <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl flex flex-wrap justify-between items-center shadow-xl gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-white">Materi Pembelajaran IPS - Kelas {appSession.kelas}{appSession.subKelas}</h2>
+                <p className="text-slate-400 text-xs mt-1">Pilih materi di bawah untuk dibaca. Timer belajar akan otomatis berjalan saat materi dibuka.</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {availableMaterials.map((m) => (
-                <div key={m.id} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col hover:border-slate-700 transition-all shadow-xl group">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {myClassMaterials.map(m => (
+                <div 
+                  key={m.id} 
+                  onClick={() => { setSelectedMaterial(m); setActiveTab('belajar'); }} 
+                  className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col hover:border-blue-500 cursor-pointer transition-all shadow-xl group"
+                >
                   {m.imageUrl && (
-                    <div className="h-40 bg-slate-950 overflow-hidden">
-                      <img src={m.imageUrl} alt={m.title} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-300" />
+                    <div className="h-48 bg-slate-950 overflow-hidden">
+                      <img src={m.imageUrl} alt={m.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                     </div>
                   )}
                   <div className="p-5 flex-1 flex flex-col">
                     <div className="flex justify-between items-center mb-2">
-                      <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-bold px-2.5 py-0.5 rounded-lg border border-emerald-500/20">
-                        Kelas {m.kelas}
+                      <span className="bg-blue-500/10 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-500/20">
+                        Semester {m.semester}
                       </span>
-                      <span className="text-[11px] text-amber-400 font-semibold flex items-center gap-1">
-                        <Clock className="w-3 h-3"/> {m.durationMinutes || 15} Menit
+                      <span className="text-[11px] text-amber-400 font-bold flex items-center gap-1">
+                        <Clock className="w-3 h-3" /> {m.durationMinutes} Mnt
                       </span>
                     </div>
 
-                    <h3 className="font-bold text-white text-sm mb-2 group-hover:text-blue-400 transition-colors leading-snug">{m.title}</h3>
+                    <h3 className="font-bold text-white text-base mb-2 leading-snug">{m.title}</h3>
                     <p className="text-xs text-slate-400 line-clamp-3 mb-4 leading-relaxed">{m.content}</p>
 
-                    <button 
-                      onClick={() => handleOpenMaterial(m)}
-                      className="mt-auto w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all shadow-md shadow-blue-600/20 flex justify-center items-center gap-2 active:scale-95"
-                    >
-                      <BookOpen className="w-4 h-4"/> Buka & Baca Materi
-                    </button>
+                    <div className="mt-auto pt-4 border-t border-slate-800 text-xs text-blue-400 font-semibold flex items-center justify-between">
+                      <span>Buka & Baca Materi</span>
+                      <ArrowLeft className="w-3.5 h-3.5 rotate-180" />
+                    </div>
                   </div>
                 </div>
               ))}
 
-              {availableMaterials.length === 0 && (
-                <div className="col-span-full bg-slate-900/50 border border-dashed border-slate-800 rounded-3xl p-12 text-center text-slate-500 space-y-3">
-                  <BookOpen className="w-10 h-10 mx-auto text-slate-600 animate-bounce" />
-                  <p className="font-semibold text-xs">Belum ada materi IPS yang diterbitkan oleh Guru untuk Kelas {studentSession.kelas}.</p>
-                  <p className="text-[11px] text-slate-600">Materi akan muncul secara otomatis ketika guru menerbitkan materi baru dari Portal Guru.</p>
+              {myClassMaterials.length === 0 && (
+                <div className="col-span-full p-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-2xl">
+                  <BookOpen className="w-10 h-10 mx-auto mb-2 text-slate-600"/>
+                  <p className="font-semibold text-xs">Belum ada materi khusus untuk Kelas {appSession.kelas}{appSession.subKelas}.</p>
                 </div>
               )}
             </div>
           </main>
+        </div>
+      );
+    }
+
+    function StudentMaterialView({ selectedMaterial, appSession, questions, scores, isFullscreen, toggleFullscreen, onBack, onSubmitQuiz, sendStudentPresenceSignal }) {
+      const [remainingSeconds, setRemainingSeconds] = useState((selectedMaterial.durationMinutes || 15) * 60);
+      const [focusStatus, setFocusStatus] = useState('active'); 
+      const presKey = `${appSession.username}_${selectedMaterial.id}`;
+
+      // Handle Timer Countdown
+      useEffect(() => {
+        const timerInterval = setInterval(() => {
+          setRemainingSeconds(prev => {
+            if (prev <= 1) {
+              clearInterval(timerInterval);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+
+        return () => clearInterval(timerInterval);
+      }, []);
+
+      // Realtime Detection tab switch / window blur / focus change
+      useEffect(() => {
+        const updatePresence = (status) => {
+          setFocusStatus(status);
+          sendStudentPresenceSignal({
+            id: presKey,
+            studentName: appSession.username,
+            kelas: `${appSession.kelas}${appSession.subKelas}`,
+            materialId: selectedMaterial.id,
+            materialTitle: selectedMaterial.title,
+            status,
+            remainingSeconds,
+            lastUpdated: Date.now()
+          });
+        };
+
+        updatePresence('active');
+
+        const handleVisibilityChange = () => {
+          if (document.hidden) {
+            updatePresence('warning');
+          } else {
+            updatePresence('active');
+          }
+        };
+
+        const handleBlur = () => updatePresence('warning');
+        const handleFocus = () => updatePresence('active');
+
+        const handleResetByTeacher = () => {
+          setFocusStatus('active');
+          updatePresence('active');
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('blur', handleBlur);
+        window.addEventListener('focus', handleFocus);
+        window.addEventListener('RESET_FOCUS_BY_TEACHER', handleResetByTeacher);
+
+        return () => {
+          document.removeEventListener('visibilitychange', handleVisibilityChange);
+          window.removeEventListener('blur', handleBlur);
+          window.removeEventListener('focus', handleFocus);
+          window.removeEventListener('RESET_FOCUS_BY_TEACHER', handleResetByTeacher);
+        };
+      }, [remainingSeconds]);
+
+      const matQuestions = questions.filter(q => q.materialId === selectedMaterial.id);
+      const alreadyTaken = scores.some(s => s.materialId === selectedMaterial.id && s.studentName === appSession.username);
+
+      const mins = Math.floor(remainingSeconds / 60);
+      const secs = remainingSeconds % 60;
+      const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+
+      return (
+        <div className="w-full min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-8 space-y-6">
+          {/* Sticky Header Status & Timer */}
+          <div className="sticky top-4 z-30 bg-slate-900/95 backdrop-blur-xl border border-slate-800 rounded-2xl p-4 shadow-2xl flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              {focusStatus === 'active' ? (
+                <div className="flex items-center gap-2 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3.5 py-2 rounded-xl text-xs font-bold">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+                  🟢 Status: Sedang Belajar (Fokus)
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 px-3.5 py-2 rounded-xl text-xs font-bold">
+                  <AlertTriangle className="w-4 h-4 text-yellow-400 animate-bounce" />
+                  🟡 Status: Terdeteksi Membuka Tab Lain!
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <span className="block text-[10px] text-slate-400 font-semibold uppercase">Sisa Waktu Belajar</span>
+                <span className="text-xl font-mono font-extrabold text-amber-300 flex items-center justify-end gap-1.5">
+                  <Clock className="w-4 h-4 text-amber-400" /> {timeStr}
+                </span>
+              </div>
+
+              <button 
+                onClick={toggleFullscreen} 
+                className="bg-slate-950 hover:bg-slate-800 p-2.5 rounded-xl border border-slate-800 text-slate-300"
+                title={isFullscreen ? "Keluar Fullscreen" : "Fullscreen"}
+              >
+                {isFullscreen ? <Minimize2 className="w-4 h-4 text-amber-400" /> : <Maximize2 className="w-4 h-4 text-blue-400" />}
+              </button>
+
+              <button onClick={onBack} className="text-slate-400 hover:text-white bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center gap-1.5 text-xs font-semibold">
+                <ArrowLeft className="w-4 h-4"/> Kembalikan
+              </button>
+            </div>
+          </div>
+
+          {/* Content Material Full-Width Container */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="p-6 sm:p-10 space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
+                <span className="bg-blue-500/10 text-blue-400 text-xs font-bold px-3 py-1 rounded-lg border border-blue-500/20">
+                  IPS Kelas {selectedMaterial.kelas} • Semester {selectedMaterial.semester}
+                </span>
+                <span className="text-slate-400 text-xs">Penerima: Kelas {appSession.kelas}{appSession.subKelas}</span>
+              </div>
+
+              <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">{selectedMaterial.title}</h1>
+
+              {selectedMaterial.imageUrl && (
+                <div className="rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 max-h-[500px]">
+                  <img src={selectedMaterial.imageUrl} alt={selectedMaterial.title} className="w-full h-full object-cover" />
+                </div>
+              )}
+
+              <div className="text-slate-200 text-base sm:text-lg leading-relaxed whitespace-pre-wrap font-sans space-y-4">
+                {selectedMaterial.content}
+              </div>
+
+              {selectedMaterial.source && (
+                <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 text-xs text-slate-400">
+                  <span className="font-bold text-slate-200">Sumber / Referensi:</span> {selectedMaterial.source}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Quiz Section Full-Width Container */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-10 shadow-xl">
+            <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+              <CheckCircle className="text-emerald-500 w-6 h-6"/> Soal Latihan & Evaluasi
+            </h3>
+
+            {matQuestions.length === 0 ? (
+              <p className="text-slate-500 text-xs italic">Belum ada kuis/soal latihan untuk materi ini.</p>
+            ) : alreadyTaken ? (
+              <div className="text-center py-8">
+                <Award className="w-16 h-16 text-yellow-500 mx-auto mb-3"/>
+                <p className="text-white font-bold text-base">Anda telah menyelesaikan kuis latihan untuk materi ini!</p>
+              </div>
+            ) : (
+              <form onSubmit={onSubmitQuiz} className="space-y-6">
+                {matQuestions.map((q, idx) => (
+                  <div key={q.id} className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
+                    <p className="font-semibold text-white text-sm sm:text-base leading-relaxed flex items-start gap-2">
+                      <span className="bg-blue-600 text-white w-6 h-6 shrink-0 flex items-center justify-center rounded-full text-xs font-bold">{idx + 1}</span>
+                      <span>{q.questionText}</span>
+                    </p>
+
+                    {q.type === 'pg' ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-8">
+                        {['A', 'B', 'C', 'D'].map(opt => (
+                          <label key={opt} className="flex items-center p-3 rounded-xl border border-slate-800 bg-slate-900 hover:border-blue-500 cursor-pointer text-xs sm:text-sm text-slate-300">
+                            <input type="radio" name={q.id} value={opt} required className="mr-3 text-blue-600 focus:ring-0" />
+                            <span><strong className="text-white">{opt}.</strong> {q[`option${opt}`]}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="pl-8">
+                        <input type="text" name={q.id} required placeholder="Ketikkan jawaban isian Anda..." className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs sm:text-sm text-white focus:border-blue-500 outline-none" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl transition-all text-sm shadow-lg shadow-emerald-600/30">
+                  Kumpulkan Jawaban Evaluasi
+                </button>
+              </form>
+            )}
+          </div>
         </div>
       );
     }
