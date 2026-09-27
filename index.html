@@ -45,11 +45,11 @@
     import { getAuth, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
     import { getFirestore, collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
     import { 
-      BookOpen, Clock, CheckCircle, AlertTriangle, User, LogIn, LogOut, 
-      ArrowLeft, Award, FileText, Send, Sparkles, RefreshCw
+      BookOpen, Clock, AlertTriangle, LogIn, LogOut, 
+      ArrowLeft, Award, Send, Sparkles, UserCheck
     } from 'lucide-react';
 
-    // Konfigurasi Firebase (HARUS SAMA DENGAN PORTAL GURU)
+    // Konfigurasi Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyD3M8FfqHdzCRO3VCKB24xPEcEZgVVK--M",
       authDomain: "gen-lang-client-0031221493.firebaseapp.com",
@@ -79,6 +79,7 @@
 
       const [materials, setMaterials] = useState([]);
       const [questions, setQuestions] = useState([]);
+      const [studentsList, setStudentsList] = useState([]); // Daftar Siswa dari Firestore
       const [scores, setScores] = useState(() => {
         const local = localStorage.getItem('elearning_scores_v3');
         return local ? JSON.parse(local) : [];
@@ -93,10 +94,10 @@
       const [userAnswers, setUserAnswers] = useState({});
       const [quizResult, setQuizResult] = useState(null);
 
-      // State Login Siswa
-      const [loginName, setLoginName] = useState('');
-      const [loginKelas, setLoginKelas] = useState('7');
-      const [loginSubKelas, setLoginSubKelas] = useState('A');
+      // State Pilihan Login Siswa
+      const [selectedKelas, setSelectedKelas] = useState('7');
+      const [selectedSubKelas, setSelectedSubKelas] = useState('A');
+      const [selectedStudentId, setSelectedStudentId] = useState('');
 
       // Persistence Session
       useEffect(() => {
@@ -107,7 +108,7 @@
         }
       }, [studentSession]);
 
-      // REALTIME FIRESTORE LISTENER (SINKRONISASI MATERI DARI GURU)
+      // REALTIME FIRESTORE LISTENERS
       useEffect(() => {
         const initAuth = async () => {
           try {
@@ -122,37 +123,47 @@
         };
         initAuth();
 
-        // 1. Dapatkan Materi dari Cloud Firestore
+        // 1. Sync Daftar Siswa dari Portal Guru
+        const studentsCol = collection(db, 'artifacts', appId, 'public', 'data', 'students');
+        const unsubStudents = onSnapshot(studentsCol, (snapshot) => {
+          const list = snapshot.docs.map(doc => doc.data());
+          setStudentsList(list);
+          localStorage.setItem('elearning_students_v3', JSON.stringify(list));
+        }, () => {
+          const local = localStorage.getItem('elearning_students_v3');
+          if (local) setStudentsList(JSON.parse(local));
+        });
+
+        // 2. Sync Materi dari Cloud Firestore
         const materialsCol = collection(db, 'artifacts', appId, 'public', 'data', 'materials');
         const unsubMaterials = onSnapshot(materialsCol, (snapshot) => {
           const list = snapshot.docs.map(doc => doc.data());
           setMaterials(list);
-          // Simpan backup ke localStorage
           localStorage.setItem('elearning_materials_v3', JSON.stringify(list));
-        }, (err) => {
-          // Fallback ke localStorage jika koneksi terganggu
+        }, () => {
           const local = localStorage.getItem('elearning_materials_v3');
           if (local) setMaterials(JSON.parse(local));
         });
 
-        // 2. Dapatkan Soal Kuis dari Cloud Firestore
+        // 3. Sync Soal Kuis dari Cloud Firestore
         const questionsCol = collection(db, 'artifacts', appId, 'public', 'data', 'questions');
         const unsubQuestions = onSnapshot(questionsCol, (snapshot) => {
           const list = snapshot.docs.map(doc => doc.data());
           setQuestions(list);
           localStorage.setItem('elearning_questions_v3', JSON.stringify(list));
-        }, (err) => {
+        }, () => {
           const local = localStorage.getItem('elearning_questions_v3');
           if (local) setQuestions(JSON.parse(local));
         });
 
         return () => {
+          unsubStudents();
           unsubMaterials();
           unsubQuestions();
         };
       }, []);
 
-      // Broadcast Listener (Apabila Guru Mung-Reset Status)
+      // Broadcast Listener
       useEffect(() => {
         if (!broadcast) return;
         const handleMessage = (event) => {
@@ -168,7 +179,7 @@
         return () => broadcast.removeEventListener('message', handleMessage);
       }, [studentSession]);
 
-      // Peringatan Pindah Tab (Tab Visibility API)
+      // Peringatan Pindah Tab
       useEffect(() => {
         const handleVisibilityChange = () => {
           if (document.hidden && timerActive && selectedMaterial && studentSession) {
@@ -188,9 +199,7 @@
               lastUpdated: Date.now()
             };
 
-            if (broadcast) {
-              broadcast.postMessage({ type: 'STUDENT_PRESENCE_UPDATE', payload: updatePayload });
-            }
+            if (broadcast) broadcast.postMessage({ type: 'STUDENT_PRESENCE_UPDATE', payload: updatePayload });
             try {
               const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_presence', presKey);
               setDoc(docRef, updatePayload);
@@ -209,8 +218,6 @@
           interval = setInterval(() => {
             setTimerSeconds(prev => {
               const nextVal = prev - 1;
-              
-              // Sync Kehadiran & Timer Sisa ke Guru
               if (selectedMaterial && studentSession) {
                 const presKey = `${studentSession.id}_${selectedMaterial.id}`;
                 const updatePayload = {
@@ -244,16 +251,23 @@
         return () => clearInterval(interval);
       }, [timerActive, timerSeconds, selectedMaterial, studentSession]);
 
-      // Handle Login Siswa
+      // Filter daftar siswa sesuai Kelas & Rombel yang dipilih
+      const filteredStudents = studentsList.filter(s => 
+        (s.kelas === selectedKelas || s.kelas === `Kelas ${selectedKelas}`) && 
+        (s.subKelas === selectedSubKelas || s.subKelas === `Rombel ${selectedSubKelas}`)
+      );
+
+      // Handle Submit Login (Siswa Memilih Namanya)
       const handleStudentLogin = (e) => {
         e.preventDefault();
-        if (!loginName.trim()) return;
+        const foundStudent = studentsList.find(s => s.id === selectedStudentId);
+        if (!foundStudent) return;
 
         const stuSession = {
-          id: 'stu_' + Date.now(),
-          name: loginName.trim(),
-          kelas: loginKelas,
-          subKelas: loginSubKelas
+          id: foundStudent.id,
+          name: foundStudent.name,
+          kelas: selectedKelas,
+          subKelas: selectedSubKelas
         };
 
         setStudentSession(stuSession);
@@ -271,7 +285,6 @@
         setUserAnswers({});
         setQuizResult(null);
 
-        // Notify Presence Pertama Kali
         if (studentSession) {
           const presKey = `${studentSession.id}_${mat.id}`;
           const updatePayload = {
@@ -324,10 +337,16 @@
         const updatedScores = [newScoreObj, ...scores];
         setScores(updatedScores);
         localStorage.setItem('elearning_scores_v3', JSON.stringify(updatedScores));
+
+        try {
+          const scoreDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', newScoreObj.id);
+          setDoc(scoreDocRef, newScoreObj);
+        } catch (e) {}
+
         setQuizResult(calculatedScore);
       };
 
-      // Screen 1: Form Login Siswa
+      // Screen 1: Form Login Siswa (PILIH NAMA)
       if (!studentSession) {
         return (
           <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4 relative overflow-hidden">
@@ -340,29 +359,17 @@
                   <BookOpen className="w-8 h-8 text-white" />
                 </div>
                 <h1 className="text-2xl font-extrabold text-white tracking-tight">Portal Siswa E-Learning</h1>
-                <p className="text-slate-400 text-xs mt-1">Mata Pelajaran Ilmu Pengetahuan Sosial (IPS)</p>
+                <p className="text-slate-400 text-xs mt-1">Pilih kelas dan nama Anda untuk masuk ke ruang belajar</p>
               </div>
 
               <form onSubmit={handleStudentLogin} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Nama Lengkap Siswa</label>
-                  <input 
-                    type="text" 
-                    required 
-                    placeholder="Masukkan nama lengkap Anda..."
-                    value={loginName}
-                    onChange={(e) => setLoginName(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-blue-500"
-                  />
-                </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-400 mb-1">Tingkat Kelas</label>
                     <select 
-                      value={loginKelas} 
-                      onChange={(e) => setLoginKelas(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white"
+                      value={selectedKelas} 
+                      onChange={(e) => { setSelectedKelas(e.target.value); setSelectedStudentId(''); }}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-blue-500"
                     >
                       <option value="7">Kelas 7</option>
                       <option value="8">Kelas 8</option>
@@ -371,11 +378,11 @@
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1">Rombel / Kelas</label>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">Rombel / Sub-Kelas</label>
                     <select 
-                      value={loginSubKelas} 
-                      onChange={(e) => setLoginSubKelas(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white"
+                      value={selectedSubKelas} 
+                      onChange={(e) => { setSelectedSubKelas(e.target.value); setSelectedStudentId(''); }}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-blue-500"
                     >
                       <option value="A">Rombel A</option>
                       <option value="B">Rombel B</option>
@@ -385,8 +392,32 @@
                   </div>
                 </div>
 
-                <button type="submit" className="w-full mt-2 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-blue-600/30 flex justify-center items-center gap-2 text-xs active:scale-95">
-                  <LogIn className="w-4 h-4" /> Masuk Portal Ruang Belajar
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Pilih Nama Anda</label>
+                  <select 
+                    value={selectedStudentId} 
+                    onChange={(e) => setSelectedStudentId(e.target.value)}
+                    required
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-blue-500"
+                  >
+                    <option value="">-- {filteredStudents.length > 0 ? 'Pilih Nama Siswa' : 'Belum Ada Data Siswa'} --</option>
+                    {filteredStudents.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name} ({s.nisn || 'Siswa'})</option>
+                    ))}
+                  </select>
+                  {filteredStudents.length === 0 && (
+                    <p className="text-[11px] text-amber-400/80 mt-1.5 italic">
+                      * Data siswa untuk Kelas {selectedKelas}{selectedSubKelas} belum diinput oleh Guru di Portal Guru.
+                    </p>
+                  )}
+                </div>
+
+                <button 
+                  type="submit" 
+                  disabled={!selectedStudentId}
+                  className="w-full mt-2 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-blue-600/30 flex justify-center items-center gap-2 text-xs active:scale-95"
+                >
+                  <UserCheck className="w-4 h-4" /> Masuk Portal Pembelajaran
                 </button>
               </form>
             </div>
@@ -394,14 +425,14 @@
         );
       }
 
-      // Filter Materi Sesuai Kelas Siswa & Semua Rombel
+      // Filter Materi Sesuai Kelas Siswa
       const availableMaterials = materials.filter(m => {
         const matchKelas = m.kelas === studentSession.kelas;
         const matchSubKelas = m.subKelasTarget === 'semua' || m.subKelasTarget === studentSession.subKelas;
         return matchKelas && matchSubKelas;
       });
 
-      // Screen 2: Tampilan Membaca Materi / Mengerjakan Kuis
+      // Screen 2: Membaca Materi / Mengerjakan Evaluasi
       if (selectedMaterial) {
         const mins = Math.floor(timerSeconds / 60);
         const secs = timerSeconds % 60;
@@ -410,7 +441,6 @@
 
         return (
           <div className="min-h-screen bg-slate-950 text-slate-100 pb-12">
-            {/* Header Sticky Timer */}
             <div className="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 px-4 py-3">
               <div className="max-w-4xl mx-auto flex justify-between items-center">
                 <button 
@@ -430,17 +460,15 @@
             </div>
 
             <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6">
-              {/* Notifikasi Peringatan Pindah Tab */}
               {isWarningState && (
                 <div className="bg-yellow-500/20 border border-yellow-500/40 p-4 rounded-2xl flex items-center gap-3 text-xs text-yellow-200 animate-pulse">
                   <AlertTriangle className="w-6 h-6 text-yellow-400 shrink-0" />
                   <div>
-                    <span className="font-bold">PERINGATAN SISWA:</span> Anda terdeteksi berpindah tab/membuka aplikasi lain. Fokus kembali membaca materi ini agar guru dapat memverifikasi status Anda.
+                    <span className="font-bold">PERINGATAN SISWA:</span> Anda terdeteksi berpindah tab/membuka aplikasi lain. Kembalilah membaca materi ini agar guru dapat mengonfirmasi kehadiran Anda.
                   </div>
                 </div>
               )}
 
-              {/* Konten Utama Bacaan */}
               {!quizMode ? (
                 <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-8 shadow-2xl space-y-6">
                   {selectedMaterial.imageUrl && (
@@ -475,7 +503,6 @@
                   </div>
                 </div>
               ) : (
-                /* Mode Mengerjakan Soal Latihan */
                 <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-8 shadow-2xl space-y-6">
                   <div className="border-b border-slate-800 pb-4 flex justify-between items-center">
                     <div>
@@ -539,7 +566,6 @@
                       )}
                     </div>
                   ) : (
-                    /* Hasil Kuis */
                     <div className="text-center py-8 space-y-4">
                       <div className="inline-flex p-4 bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30 mb-2">
                         <Award className="w-12 h-12" />
