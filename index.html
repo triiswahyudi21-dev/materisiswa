@@ -76,7 +76,7 @@
       Clock, AlertTriangle, ShieldAlert, Sparkles, Maximize2, Minimize2
     } from 'lucide-react';
 
-    // Konfigurasi Firebase Fallback
+    // Konfigurasi Firebase (Harus SAMA PERSIS dengan Portal Guru)
     const firebaseConfig = {
       apiKey: "AIzaSyD3M8FfqHdzCRO3VCKB24xPEcEZgVVK--M",
       authDomain: "gen-lang-client-0031221493.firebaseapp.com",
@@ -91,9 +91,11 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
+
+    // KUNCI SINKRONISASI: appId harus persis sama dengan portal guru
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'elearning-ips-v3';
 
-    // BroadcastChannel untuk Sync Realtime antar Tab Browser
+    // BroadcastChannel untuk Sync Realtime Lintas Tab Browser
     const broadcast = typeof window !== 'undefined' && 'BroadcastChannel' in window
       ? new BroadcastChannel('elearning_ips_realtime_channel')
       : null;
@@ -137,10 +139,10 @@
       const [loginSiswaSubKelas, setLoginSiswaSubKelas] = useState('A');
       const [loginSiswaName, setLoginSiswaName] = useState('');
 
-      // SINKRONISASI REALTIME FIREBASE UNTUK SOAL, MATERI, DAN SISWA
+      // 1. SINKRONISASI REALTIME FIREBASE UNTUK SOAL, MATERI, DAN SISWA
       useEffect(() => {
-        // Fetch Soal Realtime dari Firestore
         try {
+          // Fetch Soal Realtime dari Firestore
           const questionsRef = doc(db, 'artifacts', appId, 'public', 'data_questions');
           const unsubQuestions = onSnapshot(questionsRef, (docSnap) => {
             if (docSnap.exists() && docSnap.data().list) {
@@ -148,7 +150,7 @@
               setQuestions(qList);
               localStorage.setItem('elearning_questions_v3', JSON.stringify(qList));
             }
-          }, (err) => console.log("Firebase sync fallback ke local"));
+          }, (err) => console.log("Firebase questions sync fallback ke local:", err));
           
           // Fetch Materi Realtime dari Firestore
           const materialsRef = doc(db, 'artifacts', appId, 'public', 'data_materials');
@@ -158,18 +160,29 @@
               setMaterials(mList);
               localStorage.setItem('elearning_materials_v3', JSON.stringify(mList));
             }
-          });
+          }, (err) => console.log("Firebase materials sync fallback ke local:", err));
+
+          // Fetch Daftar Siswa Terdaftar dari Firestore
+          const studentsRef = doc(db, 'artifacts', appId, 'public', 'data_students');
+          const unsubStudents = onSnapshot(studentsRef, (docSnap) => {
+            if (docSnap.exists() && docSnap.data().list) {
+              const sList = docSnap.data().list;
+              setStudents(sList);
+              localStorage.setItem('elearning_students_v3', JSON.stringify(sList));
+            }
+          }, (err) => console.log("Firebase students sync fallback ke local:", err));
 
           return () => {
             unsubQuestions();
             unsubMaterials();
+            unsubStudents();
           };
         } catch (e) {
-          console.log("Menggunakan penyimpanan lokal fallback");
+          console.log("Menggunakan penyimpanan lokal fallback:", e);
         }
       }, []);
 
-      // Sinkronisasi Perubahan Data Local Storage
+      // 2. SINKRONISASI BROADCASTCHANNEL & STORAGE EVENT
       useEffect(() => {
         const handleStorageChange = () => {
           const m = localStorage.getItem('elearning_materials_v3');
@@ -183,8 +196,37 @@
         };
 
         window.addEventListener('storage', handleStorageChange);
+
+        // Listener BroadcastChannel jika portal dibuka pada browser yang sama
+        if (broadcast) {
+          const handleBroadcastMessage = (event) => {
+            const { type, payload } = event.data || {};
+            if (type === 'QUESTIONS_UPDATED') {
+              setQuestions(payload);
+              localStorage.setItem('elearning_questions_v3', JSON.stringify(payload));
+            } else if (type === 'MATERIALS_UPDATED') {
+              setMaterials(payload);
+              localStorage.setItem('elearning_materials_v3', JSON.stringify(payload));
+            } else if (type === 'STUDENTS_UPDATED') {
+              setStudents(payload);
+              localStorage.setItem('elearning_students_v3', JSON.stringify(payload));
+            } else if (type === 'TEACHER_RESET_STATUS' && appSession) {
+              if (payload.studentName === appSession.username) {
+                showNotification("Guru telah mereset status Anda! Silakan lanjutkan membaca.");
+                window.dispatchEvent(new CustomEvent('RESET_FOCUS_BY_TEACHER'));
+              }
+            }
+          };
+
+          broadcast.addEventListener('message', handleBroadcastMessage);
+          return () => {
+            window.removeEventListener('storage', handleStorageChange);
+            broadcast.removeEventListener('message', handleBroadcastMessage);
+          };
+        }
+
         return () => window.removeEventListener('storage', handleStorageChange);
-      }, []);
+      }, [appSession]);
 
       useEffect(() => {
         if (appSession) {
@@ -225,28 +267,11 @@
               await signInAnonymously(auth);
             }
           } catch (e) {
-            console.log("Firebase fallback lokal aktif");
+            console.log("Firebase fallback lokal aktif:", e);
           }
         };
         initAuth();
       }, []);
-
-      // BroadcastChannel Listener Reset Status
-      useEffect(() => {
-        if (!broadcast) return;
-        const handleMessage = (event) => {
-          const { type, payload } = event.data || {};
-          if (type === 'TEACHER_RESET_STATUS' && appSession) {
-            if (payload.studentName === appSession.username) {
-              showNotification("Guru telah mereset status Anda! Silakan lanjutkan membaca.");
-              window.dispatchEvent(new CustomEvent('RESET_FOCUS_BY_TEACHER'));
-            }
-          }
-        };
-
-        broadcast.addEventListener('message', handleMessage);
-        return () => broadcast.removeEventListener('message', handleMessage);
-      }, [appSession]);
 
       const showNotification = (msg) => {
         setNotification(msg);
@@ -286,7 +311,6 @@
         setActiveTab('dashboard');
         showNotification(`Selamat datang ${loginSiswaName} (Kelas ${loginSiswaKelas}${loginSiswaSubKelas})!`);
         
-        // Memicu fullscreen otomatis saat login jika didukung
         if (document.documentElement.requestFullscreen) {
           document.documentElement.requestFullscreen().catch(() => {});
         }
@@ -315,7 +339,7 @@
         e.preventDefault();
         const formData = new FormData(e.target);
         
-        // Filter soal berdasarkan ID materi (pencocokan string tipat)
+        // Pencocokan fleksibel ID materi (string vs number)
         const matQs = questions.filter(q => String(q.materialId) === String(selectedMaterial.id));
 
         let correct = 0;
@@ -347,6 +371,13 @@
         const updatedScores = [newScore, ...scores];
         setScores(updatedScores);
         localStorage.setItem('elearning_scores_v3', JSON.stringify(updatedScores));
+
+        if (broadcast) {
+          broadcast.postMessage({
+            type: 'NEW_SCORE_SUBMITTED',
+            payload: newScore
+          });
+        }
 
         // Kirim Nilai ke Firestore
         try {
@@ -431,7 +462,7 @@
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1.5">Nama Lengkap Siswa</label>
-                  {students.filter(s => s.kelas === loginSiswaKelas && s.subKelas === loginSiswaSubKelas).length > 0 ? (
+                  {students.filter(s => String(s.kelas) === String(loginSiswaKelas) && String(s.subKelas) === String(loginSiswaSubKelas)).length > 0 ? (
                     <select 
                       value={loginSiswaName}
                       onChange={(e) => setLoginSiswaName(e.target.value)}
@@ -440,7 +471,7 @@
                     >
                       <option value="">-- Pilih Nama Siswa Terdaftar --</option>
                       {students
-                        .filter(s => s.kelas === loginSiswaKelas && s.subKelas === loginSiswaSubKelas)
+                        .filter(s => String(s.kelas) === String(loginSiswaKelas) && String(s.subKelas) === String(loginSiswaSubKelas))
                         .map(s => (
                           <option key={s.id} value={s.name}>{s.name}</option>
                         ))}
@@ -483,8 +514,8 @@
       }
 
       const myClassMaterials = materials.filter(m => {
-        if (m.kelas !== appSession.kelas) return false;
-        if (m.subKelasTarget && m.subKelasTarget !== 'semua' && m.subKelasTarget !== appSession.subKelas) {
+        if (String(m.kelas) !== String(appSession.kelas)) return false;
+        if (m.subKelasTarget && m.subKelasTarget !== 'semua' && String(m.subKelasTarget) !== String(appSession.subKelas)) {
           return false;
         }
         return true;
@@ -608,7 +639,7 @@
         return () => clearInterval(timerInterval);
       }, []);
 
-      // Realtime Detection tab switch / window blur / focus change
+      // Detection tab switch / window blur / focus change
       useEffect(() => {
         const updatePresence = (status) => {
           setFocusStatus(status);
@@ -655,7 +686,7 @@
         };
       }, [remainingSeconds]);
 
-      // FILTER SOAL DENGAN PENCOCOKAN STRING FLEKSIBEL
+      // FILTER SOAL DENGAN PENCOCOKAN STRING YANG AMAN DARI PERBEDAAN TIPE DATA
       const matQuestions = questions.filter(q => String(q.materialId) === String(selectedMaterial.id));
       const alreadyTaken = scores.some(s => String(s.materialId) === String(selectedMaterial.id) && s.studentName === appSession.username);
 
@@ -665,7 +696,7 @@
 
       return (
         <div className="w-full min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-8 space-y-6">
-          {/* Sticky Header Status & Timer */}
+          {/* Header Status & Timer */}
           <div className="sticky top-4 z-30 bg-slate-900/95 backdrop-blur-xl border border-slate-800 rounded-2xl p-4 shadow-2xl flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               {focusStatus === 'active' ? (
@@ -698,12 +729,12 @@
               </button>
 
               <button onClick={onBack} className="text-slate-400 hover:text-white bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center gap-1.5 text-xs font-semibold">
-                <ArrowLeft className="w-4 h-4"/> Kembalikan
+                <ArrowLeft className="w-4 h-4"/> Kembali
               </button>
             </div>
           </div>
 
-          {/* Content Material Full-Width Container */}
+          {/* Container Konten Materi */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
             <div className="p-6 sm:p-10 space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
@@ -733,7 +764,7 @@
             </div>
           </div>
 
-          {/* Quiz Section Full-Width Container */}
+          {/* Container Kuis / Soal Latihan */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-10 shadow-xl">
             <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
               <CheckCircle className="text-emerald-500 w-6 h-6"/> Soal Latihan & Evaluasi
